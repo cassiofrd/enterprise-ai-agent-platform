@@ -1,3 +1,45 @@
+# Enterprise AI Agent Platform
+
+Enterprise-grade multi-agent AI platform built with FastAPI, Azure Container Apps, Azure AI Search, OpenAI/Azure OpenAI, MCP and Retrieval-Augmented Generation (RAG).
+
+![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-API-green)
+![Azure](https://img.shields.io/badge/Azure-Container%20Apps-blue)
+![Docker](https://img.shields.io/badge/Docker-Ready-blue)
+![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-black)
+![Release](https://img.shields.io/badge/Release-v1.0.0-purple)
+
+---
+
+## 🚀 Features
+
+- Multi-Agent Architecture
+- Long-Term Memory
+- Retrieval-Augmented Generation (RAG)
+- Azure AI Search Integration
+- MCP (Model Context Protocol)
+- Observability
+- GitHub Actions CI/CD
+- Dockerized Deployment
+- Azure Container Apps
+- OpenAI / Azure OpenAI Support
+
+---
+
+## 🛠 Tech Stack
+
+- Python
+- FastAPI
+- Docker
+- Azure Container Apps
+- Azure Container Registry
+- Azure AI Search
+- OpenAI
+- Azure OpenAI
+- GitHub Actions
+- FAISS
+- MCP
+
 # Multi-Agent Supply Chain Copilot
 
 Reference architecture for an AI-powered supply chain copilot using **FastAPI**, **LangGraph**, **MCP**, **RAG**, **long-term memory**, **observability**, and **Azure Container Apps**.
@@ -18,27 +60,65 @@ This project demonstrates how to build and deploy a production-style multi-agent
 
 ## High-level architecture
 
-```text
-User / Client / Copilot Studio
-        |
-        v
-Supervisor Agent API
-        |
-        |-- routes to --> Inventory Agent API
-        |                    |-- Local FAISS RAG
-        |                    |-- Azure AI Search optional retrieval
-        |                    |-- Long-term memory
-        |                    |-- MCP inventory tool server
-        |                    |-- Observability and metrics
-        |
-        |-- routes to --> Supplier Agent API
+```mermaid
+graph TD
+
+    User["User / Client / Copilot Studio"]
+
+    Supervisor["Supervisor Agent API"]
+    Inventory["Inventory Agent API"]
+    Supplier["Supplier Agent API"]
+
+    Memory["Long-Term Memory"]
+    AzureSearch["Azure AI Search"]
+    FAISS["Local FAISS RAG"]
+    MCP["MCP Inventory Tool Server"]
+    Observability["Observability / Metrics"]
+
+    LLM["OpenAI / Azure OpenAI"]
+
+    GitHub["GitHub Repository"]
+    Actions["GitHub Actions CI/CD"]
+    ACR["Azure Container Registry"]
+    ACA["Azure Container Apps"]
+
+    User --> Supervisor
+
+    Supervisor --> Inventory
+    Supervisor --> Supplier
+
+    Inventory --> Memory
+    Inventory --> AzureSearch
+    Inventory --> FAISS
+    Inventory --> MCP
+    Inventory --> Observability
+    Inventory --> LLM
+
+    Supplier --> Memory
+    Supplier --> LLM
+    Supplier --> Observability
+
+    Supervisor --> LLM
+    Supervisor --> Observability
+
+    GitHub --> Actions
+    Actions --> ACR
+    ACR --> ACA
+
+    ACA --> Supervisor
+    ACA --> Inventory
+    ACA --> Supplier
+```
 
 Shared layer:
+
 - LLM provider abstraction: OpenAI / Azure OpenAI
 - Config management
 - Schemas
 - Cache
 - Observability
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a more complete diagram.
 ```
 
 See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a more complete diagram.
