@@ -1,0 +1,82 @@
+name: Build and Deploy Azure Container Apps
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+env:
+  RESOURCE_GROUP: grupoderecursos_cassiofrd
+  ACR_NAME: registrodecontainercassiofrd
+  ACR_LOGIN_SERVER: registrodecontainercassiofrd.azurecr.io
+  INVENTORY_APP: inventory-agent
+  SUPERVISOR_APP: supervisor-agent
+  SUPPLIER_APP: supplier-agent
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          creds: ${{ secrets.AZURE_CREDENTIALS }}
+
+      - name: Build and push Inventory image
+        run: |
+          az acr build \
+            --registry $ACR_NAME \
+            --image inventory-agent:latest \
+            --file Dockerfile.inventory \
+            .
+
+      - name: Build and push Supplier image
+        run: |
+          az acr build \
+            --registry $ACR_NAME \
+            --image supplier-agent:latest \
+            --file Dockerfile.supplier \
+            .
+
+      - name: Build and push Supervisor image
+        run: |
+          az acr build \
+            --registry $ACR_NAME \
+            --image supervisor-agent:latest \
+            --file Dockerfile.supervisor \
+            .
+
+      - name: Deploy Inventory Agent
+        run: |
+          az containerapp update \
+            --name $INVENTORY_APP \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR_LOGIN_SERVER/inventory-agent:latest \
+            --min-replicas 1 \
+            --max-replicas 1 \
+            --set-env-vars FORCE_RESTART=$(date +%Y%m%d%H%M%S)
+
+      - name: Deploy Supplier Agent
+        run: |
+          az containerapp update \
+            --name $SUPPLIER_APP \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR_LOGIN_SERVER/supplier-agent:latest \
+            --min-replicas 1 \
+            --max-replicas 1 \
+            --set-env-vars FORCE_RESTART=$(date +%Y%m%d%H%M%S)
+
+      - name: Deploy Supervisor Agent
+        run: |
+          az containerapp update \
+            --name $SUPERVISOR_APP \
+            --resource-group $RESOURCE_GROUP \
+            --image $ACR_LOGIN_SERVER/supervisor-agent:latest \
+            --min-replicas 1 \
+            --max-replicas 1 \
+            --set-env-vars FORCE_RESTART=$(date +%Y%m%d%H%M%S)

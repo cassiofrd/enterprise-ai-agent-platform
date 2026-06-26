@@ -1,0 +1,58 @@
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: redis-cache
+    ports:
+      - "6379:6379"
+
+  inventory-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.inventory
+    container_name: inventory-agent
+    ports:
+      - "8001:8001"
+    environment: &agent-env
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      OPENAI_CHAT_MODEL: ${OPENAI_CHAT_MODEL:-gpt-4o}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
+      AZURE_OPENAI_ENDPOINT: ${AZURE_OPENAI_ENDPOINT}
+      AZURE_OPENAI_API_KEY: ${AZURE_OPENAI_API_KEY}
+      AZURE_OPENAI_CHAT_DEPLOYMENT: ${AZURE_OPENAI_CHAT_DEPLOYMENT}
+      AZURE_OPENAI_EMBEDDING_DEPLOYMENT: ${AZURE_OPENAI_EMBEDDING_DEPLOYMENT}
+      AZURE_OPENAI_API_VERSION: ${AZURE_OPENAI_API_VERSION:-2024-12-01-preview}
+      MODEL_TEMPERATURE: ${MODEL_TEMPERATURE:-0.0}
+      MODEL_MAX_RETRIES: ${MODEL_MAX_RETRIES:-3}
+      REQUEST_TIMEOUT: ${REQUEST_TIMEOUT:-60}
+      REDIS_URL: redis://redis:6379/0
+    depends_on:
+      - redis
+
+  supplier-agent:
+    build:
+      context: .
+      dockerfile: Dockerfile.supplier
+    container_name: supplier-agent
+    ports:
+      - "8002:8002"
+    environment:
+      <<: *agent-env
+    depends_on:
+      - redis
+
+  supervisor:
+    build:
+      context: .
+      dockerfile: Dockerfile.supervisor
+    container_name: supervisor-agent
+    ports:
+      - "8000:8000"
+    environment:
+      <<: *agent-env
+      INVENTORY_AGENT_URL: http://inventory-agent:8001/invoke
+      SUPPLIER_AGENT_URL: http://supplier-agent:8002/invoke
+    depends_on:
+      - inventory-agent
+      - supplier-agent
+      - redis

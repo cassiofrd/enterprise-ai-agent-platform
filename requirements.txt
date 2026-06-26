@@ -1,0 +1,17 @@
+openai
+langchain-core
+langchain-openai
+langchain-community
+langchain-text-splitters
+langgraph
+fastapi
+uvicorn
+requests
+mcp
+faiss-cpu
+pydantic
+python-dotenv
+streamlit
+redis
+pytest
+httpx

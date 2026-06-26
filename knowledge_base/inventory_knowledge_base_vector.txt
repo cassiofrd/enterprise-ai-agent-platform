@@ -1,0 +1,41 @@
+# Inventory Knowledge Base
+
+## General reorder policy
+When inventory for a SKU falls below the minimum stock threshold, the Inventory Agent should recommend replenishment. The standard minimum stock threshold is 100 units.
+
+## Default replenishment thresholds
+- Minimum stock threshold: 100 units.
+- Recommended reorder quantity: 500 units.
+- High-priority replenishment should be considered when backorders are above 100 units.
+- Critical-priority replenishment should be considered when current stock is below 50 units and open demand is above 150 units.
+
+## Warehouse A guidance
+For Warehouse A:
+- Prioritize stock replenishment for high-demand SKUs.
+- Review backorders before placing a replenishment request.
+- Prefer suppliers with stable delivery history.
+- If a SKU has both low stock and high backorder volume, escalate the case as high priority.
+
+## Warehouse B guidance
+For Warehouse B:
+- Use conservative replenishment when storage capacity is constrained.
+- Prioritize replenishment for SKUs with stable demand.
+- Avoid excessive reorder quantities when carrying cost is high.
+
+## Backorder handling
+When backorders are high, the Inventory Agent should:
+1. Check current stock.
+2. Check minimum stock threshold.
+3. Review open demand and backorder volume.
+4. Recommend replenishment if stock is below threshold.
+5. Escalate if backorders are above 100 units.
+
+## Supplier preference
+ACME Logistics is the preferred supplier for standard replenishment orders when no other supplier constraint is provided.
+
+## Recommended response pattern
+When answering inventory policy questions:
+1. Explain the relevant policy.
+2. Mention the SKU if available.
+3. Recommend the next action.
+4. If the question needs SKU-specific reorder data, use the MCP reorder policy tool.

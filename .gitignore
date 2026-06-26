@@ -1,0 +1,17 @@
+.venv/
+__pycache__/
+*.pyc
+.env
+indexes/
+logs/
+*.zip
+*.log
+.DS_Store
+.pytest_cache/
+.mypy_cache/
+*.db
+data/*.db
+.vscode/
+.idea/
+.coverage
+htmlcov/
