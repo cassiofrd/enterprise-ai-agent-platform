@@ -277,6 +277,26 @@ See [`docs/AZURE_DEPLOYMENT.md`](docs/AZURE_DEPLOYMENT.md) for the full deployme
 
 See [`docs/API_EXAMPLES.md`](docs/API_EXAMPLES.md).
 
+## OpenAPI tool endpoints for Azure AI Foundry
+
+In addition to the conversational `/invoke` endpoint, the Inventory Agent exposes
+simple REST endpoints designed for OpenAPI-based tool calling platforms such as
+Azure AI Foundry and Copilot Studio.
+
+Examples:
+
+```text
+GET /products/{code}
+GET /inventory-policy/{code}
+GET /suppliers/{supplier_name}/products
+GET /purchasing-policy
+```
+
+These endpoints expose specific business capabilities with predictable request
+and response schemas, while `/invoke` remains available for conversational
+LangGraph-based agent interactions.
+
+
 ## Provider configuration
 
 The project can switch between OpenAI and Azure OpenAI without changing application code:

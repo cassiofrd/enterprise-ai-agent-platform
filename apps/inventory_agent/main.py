@@ -44,6 +44,90 @@ app = FastAPI(title="Inventory Agent Server with MCP, Vector RAG and Observabili
 _vector_store = None
 
 
+# Structured inventory reference data exposed as simple REST tool endpoints.
+# These endpoints are designed for OpenAPI-based tool calling platforms such as
+# Azure AI Foundry, Copilot Studio, and other external clients. They do not
+# replace /invoke; they expose specific business capabilities in a predictable
+# format.
+ABC_POLICIES = {
+    "A": {
+        "safety_stock_units": 500,
+        "replenishment_frequency": "weekly",
+        "review_frequency": "daily",
+        "critical_level_units": 300,
+    },
+    "B": {
+        "safety_stock_units": 200,
+        "replenishment_frequency": "biweekly",
+        "review_frequency": "weekly",
+        "critical_level_units": 100,
+    },
+    "C": {
+        "safety_stock_units": 50,
+        "replenishment_frequency": "monthly",
+        "review_frequency": "monthly",
+        "critical_level_units": 20,
+    },
+}
+
+PRODUCT_CATALOG = {
+    "PARAFUSO-M10": {
+        "code": "PARAFUSO-M10",
+        "product_name": "PARAFUSO-M10",
+        "abc_class": "A",
+        "preferred_supplier": "ABC Componentes Industriais",
+        "lead_time_days": 7,
+    },
+    "PARAFUSO-M20": {
+        "code": "PARAFUSO-M20",
+        "product_name": "PARAFUSO-M20",
+        "abc_class": "B",
+        "preferred_supplier": "XYZ Metais",
+        "lead_time_days": 14,
+    },
+    "PORCA-M10": {
+        "code": "PORCA-M10",
+        "product_name": "PORCA-M10",
+        "abc_class": "C",
+        "preferred_supplier": "DEF Fixadores",
+        "lead_time_days": 30,
+    },
+}
+
+PURCHASING_POLICY = {
+    "approval_threshold_brl": 50000,
+    "approval_required_above_threshold": True,
+    "approval_role": "manager",
+    "urgent_orders_without_additional_quote_when_critical": True,
+}
+
+
+def normalize_product_code(code: str) -> str:
+    return code.strip().replace("_", "-").upper()
+
+
+def get_product_or_404(code: str) -> dict:
+    normalized_code = normalize_product_code(code)
+    product = PRODUCT_CATALOG.get(normalized_code)
+    if product is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"Product not found: {normalized_code}",
+        )
+    return product
+
+
+def build_product_payload(product: dict) -> dict:
+    abc_class = product["abc_class"]
+    policy = ABC_POLICIES[abc_class]
+    return {
+        **product,
+        "inventory_policy": policy,
+        "source": "structured_inventory_reference_data",
+    }
+
+
+
 def normalize_rag_cache_key(query: str) -> str:
     normalized = " ".join(query.strip().lower().split())
 
@@ -800,6 +884,99 @@ def invoke_inventory_agent(request: InventoryRequest):
         "trace_id": trace_id,
     }
 
+
+
+@app.get("/products/{code}")
+def get_product(code: str):
+    """Return structured product information for OpenAPI tool calling.
+
+    This endpoint is intentionally simple so external agents can call it as a
+    deterministic tool. It returns catalog information plus the inventory policy
+    derived from the product ABC class.
+    """
+    product = get_product_or_404(code)
+
+    log_event(
+        "api.product.lookup",
+        agent="inventory",
+        product_code=product["code"],
+    )
+
+    return {
+        "agent": "inventory",
+        "product": build_product_payload(product),
+    }
+
+
+@app.get("/inventory-policy/{code}")
+def get_inventory_policy(code: str):
+    """Return the inventory policy for a product code.
+
+    The policy is derived by combining the product's ABC class with the ABC
+    inventory policy table. This shape is easier for Azure AI Foundry OpenAPI
+    tools than the conversational /invoke payload.
+    """
+    product = get_product_or_404(code)
+    abc_class = product["abc_class"]
+    policy = ABC_POLICIES[abc_class]
+
+    log_event(
+        "api.inventory_policy.lookup",
+        agent="inventory",
+        product_code=product["code"],
+        abc_class=abc_class,
+    )
+
+    return {
+        "agent": "inventory",
+        "product_code": product["code"],
+        "abc_class": abc_class,
+        "policy": policy,
+        "source": "structured_inventory_reference_data",
+    }
+
+
+@app.get("/suppliers/{supplier_name}/products")
+def get_products_by_supplier(supplier_name: str):
+    """Return products associated with a preferred supplier."""
+    normalized_supplier = supplier_name.strip().lower()
+    products = [
+        build_product_payload(product)
+        for product in PRODUCT_CATALOG.values()
+        if product["preferred_supplier"].lower() == normalized_supplier
+    ]
+
+    log_event(
+        "api.supplier.products.lookup",
+        agent="inventory",
+        supplier_name=supplier_name,
+        result_count=len(products),
+    )
+
+    if not products:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No products found for supplier: {supplier_name}",
+        )
+
+    return {
+        "agent": "inventory",
+        "supplier": supplier_name,
+        "products": products,
+        "source": "structured_inventory_reference_data",
+    }
+
+
+@app.get("/purchasing-policy")
+def get_purchasing_policy():
+    """Return structured purchasing policy information."""
+    log_event("api.purchasing_policy.lookup", agent="inventory")
+
+    return {
+        "agent": "inventory",
+        "policy": PURCHASING_POLICY,
+        "source": "structured_inventory_reference_data",
+    }
 
 
 @app.get("/memories")

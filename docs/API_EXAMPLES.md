@@ -59,3 +59,53 @@ curl -X POST "http://localhost:8000/copilot" ^
   -H "Content-Type: application/json" ^
   -d "{\"question\":\"Qual o fornecedor do PARAFUSO-M20?\"}"
 ```
+
+## OpenAPI tool endpoints for Azure AI Foundry
+
+These endpoints expose specific business capabilities in a simple REST format.
+They are easier to consume as OpenAPI tools than the conversational `/invoke`
+endpoint.
+
+### Product lookup
+
+```http
+GET /products/PARAFUSO-M20
+```
+
+Expected response excerpt:
+
+```json
+{
+  "agent": "inventory",
+  "product": {
+    "code": "PARAFUSO-M20",
+    "abc_class": "B",
+    "preferred_supplier": "XYZ Metais",
+    "lead_time_days": 14,
+    "inventory_policy": {
+      "safety_stock_units": 200,
+      "replenishment_frequency": "biweekly",
+      "review_frequency": "weekly",
+      "critical_level_units": 100
+    }
+  }
+}
+```
+
+### Inventory policy lookup
+
+```http
+GET /inventory-policy/PARAFUSO-M20
+```
+
+### Supplier product lookup
+
+```http
+GET /suppliers/XYZ%20Metais/products
+```
+
+### Purchasing policy lookup
+
+```http
+GET /purchasing-policy
+```
