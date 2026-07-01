@@ -1,0 +1,201 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Inventory Agent Tools",
+    "version": "1.1.0",
+    "description": "OpenAPI tool schema for Azure AI Foundry integration."
+  },
+  "servers": [
+    {
+      "url": "https://inventory-agent.politedune-38af7eb9.brazilsouth.azurecontainerapps.io"
+    }
+  ],
+  "paths": {
+    "/products/{code}": {
+      "get": {
+        "operationId": "getProduct",
+        "summary": "Get product information",
+        "description": "Returns structured product information, including supplier, ABC class, lead time and inventory policy.",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "Product code, for example PARAFUSO-M20.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Product information returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProductResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/inventory-policy/{code}": {
+      "get": {
+        "operationId": "getInventoryPolicy",
+        "summary": "Get inventory policy",
+        "description": "Returns the inventory policy for a given product code.",
+        "parameters": [
+          {
+            "name": "code",
+            "in": "path",
+            "required": true,
+            "description": "Product code, for example PARAFUSO-M20.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Inventory policy returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/InventoryPolicyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/suppliers/{supplier_name}/products": {
+      "get": {
+        "operationId": "getProductsBySupplier",
+        "summary": "Get products by supplier",
+        "description": "Returns products associated with a preferred supplier.",
+        "parameters": [
+          {
+            "name": "supplier_name",
+            "in": "path",
+            "required": true,
+            "description": "Supplier name, for example XYZ Metais.",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supplier products returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierProductsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/purchasing-policy": {
+      "get": {
+        "operationId": "getPurchasingPolicy",
+        "summary": "Get purchasing policy",
+        "description": "Returns structured purchasing policy information.",
+        "responses": {
+          "200": {
+            "description": "Purchasing policy returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PurchasingPolicyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "ProductResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "product": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string" },
+              "product_name": { "type": "string" },
+              "abc_class": { "type": "string" },
+              "preferred_supplier": { "type": "string" },
+              "lead_time_days": { "type": "integer" },
+              "inventory_policy": {
+                "$ref": "#/components/schemas/InventoryPolicy"
+              }
+            }
+          }
+        }
+      },
+      "InventoryPolicyResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "product_code": { "type": "string" },
+          "abc_class": { "type": "string" },
+          "inventory_policy": {
+            "$ref": "#/components/schemas/InventoryPolicy"
+          }
+        }
+      },
+      "SupplierProductsResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "supplier_name": { "type": "string" },
+          "products": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "code": { "type": "string" },
+                "product_name": { "type": "string" },
+                "abc_class": { "type": "string" },
+                "preferred_supplier": { "type": "string" },
+                "lead_time_days": { "type": "integer" }
+              }
+            }
+          }
+        }
+      },
+      "PurchasingPolicyResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "purchasing_policy": {
+            "type": "object",
+            "properties": {
+              "manager_approval_threshold_brl": { "type": "number" },
+              "urgent_orders_allowed_without_additional_quote": { "type": "boolean" },
+              "urgent_order_condition": { "type": "string" }
+            }
+          }
+        }
+      },
+      "InventoryPolicy": {
+        "type": "object",
+        "properties": {
+          "safety_stock_units": { "type": "integer" },
+          "replenishment_frequency": { "type": "string" },
+          "review_frequency": { "type": "string" },
+          "critical_level_units": { "type": "integer" }
+        }
+      }
+    }
+  }
+}
