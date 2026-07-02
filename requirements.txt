@@ -15,3 +15,6 @@ streamlit
 redis
 pytest
 httpx
+azure-ai-agents
+azure-identity
+jsonref

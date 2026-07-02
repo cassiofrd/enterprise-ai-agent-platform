@@ -236,6 +236,45 @@ O fornecedor do PARAFUSO-M20 é XYZ Metais. Esta informação está registrada n
 ```
 
 
+
+
+## Streamlit + Azure AI Foundry UI
+
+The Streamlit UI can now run in two modes:
+
+- **Azure AI Foundry**: sends user questions to a Foundry Agent that can call the Inventory Agent through OpenAPI tools.
+- **Supervisor Container Apps**: fallback mode that sends questions directly to the existing Supervisor endpoint.
+
+Required local settings for Foundry mode:
+
+```env
+AZURE_AI_PROJECT_ENDPOINT=https://your-foundry-resource.services.ai.azure.com/api/projects/your-project
+FOUNDRY_AGENT_ID=asst_your_agent_id
+# Optional, used when the agent id is stored in deployment/foundry_agents.json
+FOUNDRY_AGENT_KEY=inventory_agent
+FOUNDRY_AGENT_DEPLOYMENT_FILE=deployment/foundry_agents.json
+```
+
+Run the UI with:
+
+```cmd
+streamlit run apps/streamlit_ui/app.py
+```
+
+When running locally, Azure authentication must be available to `DefaultAzureCredential` (for example through Azure CLI, VS Code Azure sign-in, or Cloud Shell). The UI keeps the old Supervisor endpoint as a fallback for environments where Foundry authentication is not available.
+
+The UI also includes a lightweight observability panel in the sidebar. For each question it records the selected backend, execution status, total duration, Foundry Agent ID, run ID and thread ID when available. Events are written locally as JSONL to:
+
+```text
+logs/streamlit_foundry_events.jsonl
+```
+
+You can override this path with:
+
+```env
+STREAMLIT_OBSERVABILITY_LOG=logs/streamlit_foundry_events.jsonl
+```
+
 ## Automated tests
 
 Run the first automated quality gate with:
