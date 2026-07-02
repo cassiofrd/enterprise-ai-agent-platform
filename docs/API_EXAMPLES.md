@@ -109,3 +109,27 @@ GET /suppliers/XYZ%20Metais/products
 ```http
 GET /purchasing-policy
 ```
+
+
+## OpenAPI Tool Observability
+
+The structured tool endpoints log deterministic observability events whenever they are called by Azure AI Foundry or any other HTTP client.
+
+Tracked fields include:
+
+- `event_type`: `api.openapi_tool.call`
+- `endpoint`: called endpoint template, such as `/products/{code}`
+- `method`: HTTP method
+- `tool_operation`: OpenAPI operation name, such as `getProduct`
+- `status`: `success` or `error`
+- `http_status_code`: HTTP response status
+- `latency_ms`: measured endpoint execution time
+- input-specific fields such as `product_code` or `supplier_name`
+
+These events are available through:
+
+```text
+GET /metrics
+```
+
+and are displayed in the Streamlit Observability page.

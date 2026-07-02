@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import time
 
 from fastapi import FastAPI, Query, HTTPException
 
@@ -115,6 +116,33 @@ def get_product_or_404(code: str) -> dict:
             detail=f"Product not found: {normalized_code}",
         )
     return product
+
+
+
+def log_openapi_tool_call(
+    *,
+    endpoint: str,
+    method: str = "GET",
+    status: str,
+    http_status_code: int,
+    latency_ms: float,
+    **fields,
+) -> None:
+    """Log deterministic OpenAPI tool endpoint calls.
+
+    These events are used to observe when Azure AI Foundry or another client
+    calls the structured REST capabilities exposed by the Inventory Agent.
+    """
+    log_event(
+        "api.openapi_tool.call",
+        agent="inventory",
+        endpoint=endpoint,
+        method=method,
+        status=status,
+        http_status_code=http_status_code,
+        latency_ms=round(latency_ms, 2),
+        **fields,
+    )
 
 
 def build_product_payload(product: dict) -> dict:
@@ -894,18 +922,40 @@ def get_product(code: str):
     deterministic tool. It returns catalog information plus the inventory policy
     derived from the product ABC class.
     """
-    product = get_product_or_404(code)
+    endpoint = "/products/{code}"
+    start = time.perf_counter()
+    normalized_code = normalize_product_code(code)
 
-    log_event(
-        "api.product.lookup",
-        agent="inventory",
-        product_code=product["code"],
-    )
+    try:
+        product = get_product_or_404(code)
+        payload = {
+            "agent": "inventory",
+            "product": build_product_payload(product),
+        }
 
-    return {
-        "agent": "inventory",
-        "product": build_product_payload(product),
-    }
+        latency_ms = (time.perf_counter() - start) * 1000
+        log_openapi_tool_call(
+            endpoint=endpoint,
+            status="success",
+            http_status_code=200,
+            latency_ms=latency_ms,
+            product_code=product["code"],
+            tool_operation="getProduct",
+        )
+
+        return payload
+    except HTTPException as exc:
+        latency_ms = (time.perf_counter() - start) * 1000
+        log_openapi_tool_call(
+            endpoint=endpoint,
+            status="error",
+            http_status_code=exc.status_code,
+            latency_ms=latency_ms,
+            product_code=normalized_code,
+            tool_operation="getProduct",
+            error_message=str(exc.detail),
+        )
+        raise
 
 
 @app.get("/inventory-policy/{code}")
@@ -916,67 +966,124 @@ def get_inventory_policy(code: str):
     inventory policy table. This shape is easier for Azure AI Foundry OpenAPI
     tools than the conversational /invoke payload.
     """
-    product = get_product_or_404(code)
-    abc_class = product["abc_class"]
-    policy = ABC_POLICIES[abc_class]
+    endpoint = "/inventory-policy/{code}"
+    start = time.perf_counter()
+    normalized_code = normalize_product_code(code)
 
-    log_event(
-        "api.inventory_policy.lookup",
-        agent="inventory",
-        product_code=product["code"],
-        abc_class=abc_class,
-    )
+    try:
+        product = get_product_or_404(code)
+        abc_class = product["abc_class"]
+        policy = ABC_POLICIES[abc_class]
+        payload = {
+            "agent": "inventory",
+            "product_code": product["code"],
+            "abc_class": abc_class,
+            "policy": policy,
+            "source": "structured_inventory_reference_data",
+        }
 
-    return {
-        "agent": "inventory",
-        "product_code": product["code"],
-        "abc_class": abc_class,
-        "policy": policy,
-        "source": "structured_inventory_reference_data",
-    }
+        latency_ms = (time.perf_counter() - start) * 1000
+        log_openapi_tool_call(
+            endpoint=endpoint,
+            status="success",
+            http_status_code=200,
+            latency_ms=latency_ms,
+            product_code=product["code"],
+            abc_class=abc_class,
+            tool_operation="getInventoryPolicy",
+        )
+
+        return payload
+    except HTTPException as exc:
+        latency_ms = (time.perf_counter() - start) * 1000
+        log_openapi_tool_call(
+            endpoint=endpoint,
+            status="error",
+            http_status_code=exc.status_code,
+            latency_ms=latency_ms,
+            product_code=normalized_code,
+            tool_operation="getInventoryPolicy",
+            error_message=str(exc.detail),
+        )
+        raise
 
 
 @app.get("/suppliers/{supplier_name}/products")
 def get_products_by_supplier(supplier_name: str):
     """Return products associated with a preferred supplier."""
+    endpoint = "/suppliers/{supplier_name}/products"
+    start = time.perf_counter()
     normalized_supplier = supplier_name.strip().lower()
-    products = [
-        build_product_payload(product)
-        for product in PRODUCT_CATALOG.values()
-        if product["preferred_supplier"].lower() == normalized_supplier
-    ]
 
-    log_event(
-        "api.supplier.products.lookup",
-        agent="inventory",
-        supplier_name=supplier_name,
-        result_count=len(products),
-    )
+    try:
+        products = [
+            build_product_payload(product)
+            for product in PRODUCT_CATALOG.values()
+            if product["preferred_supplier"].lower() == normalized_supplier
+        ]
 
-    if not products:
-        raise HTTPException(
-            status_code=404,
-            detail=f"No products found for supplier: {supplier_name}",
+        if not products:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No products found for supplier: {supplier_name}",
+            )
+
+        payload = {
+            "agent": "inventory",
+            "supplier": supplier_name,
+            "products": products,
+            "source": "structured_inventory_reference_data",
+        }
+
+        latency_ms = (time.perf_counter() - start) * 1000
+        log_openapi_tool_call(
+            endpoint=endpoint,
+            status="success",
+            http_status_code=200,
+            latency_ms=latency_ms,
+            supplier_name=supplier_name,
+            result_count=len(products),
+            tool_operation="getProductsBySupplier",
         )
 
-    return {
-        "agent": "inventory",
-        "supplier": supplier_name,
-        "products": products,
-        "source": "structured_inventory_reference_data",
-    }
+        return payload
+    except HTTPException as exc:
+        latency_ms = (time.perf_counter() - start) * 1000
+        log_openapi_tool_call(
+            endpoint=endpoint,
+            status="error",
+            http_status_code=exc.status_code,
+            latency_ms=latency_ms,
+            supplier_name=supplier_name,
+            result_count=0,
+            tool_operation="getProductsBySupplier",
+            error_message=str(exc.detail),
+        )
+        raise
 
 
 @app.get("/purchasing-policy")
 def get_purchasing_policy():
     """Return structured purchasing policy information."""
-    log_event("api.purchasing_policy.lookup", agent="inventory")
+    endpoint = "/purchasing-policy"
+    start = time.perf_counter()
 
-    return {
+    payload = {
         "agent": "inventory",
         "policy": PURCHASING_POLICY,
         "source": "structured_inventory_reference_data",
     }
+
+    latency_ms = (time.perf_counter() - start) * 1000
+    log_openapi_tool_call(
+        endpoint=endpoint,
+        status="success",
+        http_status_code=200,
+        latency_ms=latency_ms,
+        tool_operation="getPurchasingPolicy",
+    )
+
+    return payload
 
 
 @app.get("/memories")
