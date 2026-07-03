@@ -394,3 +394,52 @@ Validated capabilities:
 - Add Supervisor + Supplier deployment validation
 - Continue Azure AI Foundry implementation and comparison
 - Add CI/CD with GitHub Actions
+
+
+## Azure AI Foundry Supervisor Agent
+
+The recommended Foundry integration is now the **Supervisor Foundry Agent**.
+
+```text
+Streamlit
+  ↓
+Azure AI Foundry Agent
+  ↓
+OpenAPI tool: POST /copilot
+  ↓
+Supervisor Agent
+  ↓
+Inventory Agent + Supplier Agent
+```
+
+Create/update the Foundry agent that calls the Supervisor endpoint:
+
+```powershell
+$env:FOUNDRY_AGENT_KEY="supervisor_agent"
+python scripts/create_foundry_agent.py
+```
+
+The script stores the created ID in:
+
+```text
+deployment/foundry_agents.json
+```
+
+For local Streamlit execution, you can also set one of these variables in `.env`:
+
+```env
+FOUNDRY_AGENT_KEY=supervisor_agent
+FOUNDRY_AGENT_ID=asst_...
+# or
+FOUNDRY_SUPERVISOR_AGENT_ID=asst_...
+```
+
+The older specialist-only Foundry agents can still be created by changing `FOUNDRY_AGENT_KEY`:
+
+```powershell
+$env:FOUNDRY_AGENT_KEY="inventory_agent"
+python scripts/create_foundry_agent.py
+
+$env:FOUNDRY_AGENT_KEY="supplier_agent"
+python scripts/create_foundry_agent.py
+```

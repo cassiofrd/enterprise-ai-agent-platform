@@ -192,3 +192,34 @@ Relevant observability events:
 - `supervisor.agent_call.supplier.success`
 - `supervisor.multi_agent.start`
 - `supervisor.multi_agent.response`
+
+
+## Supervisor OpenAPI tool for Azure AI Foundry
+
+The Foundry-compatible Supervisor schema is available at:
+
+```text
+openapi/foundry_supervisor_tools.openapi.json
+```
+
+It exposes:
+
+```http
+POST /copilot
+```
+
+Example payload:
+
+```json
+{
+  "question": "Quem fornece o PARAFUSO-M20 e qual é a política de estoque desse produto?"
+}
+```
+
+Expected behavior:
+
+```text
+Foundry Agent -> Supervisor /copilot -> Inventory + Supplier -> consolidated answer
+```
+
+This is the recommended entry point for the Streamlit UI when using Azure AI Foundry, because the Supervisor handles routing and structured multi-agent orchestration.

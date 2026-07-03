@@ -23,7 +23,7 @@ load_dotenv()
 
 DEFAULT_SUPERVISOR_URL = "https://supervisor-agent.politedune-38af7eb9.brazilsouth.azurecontainerapps.io/copilot"
 DEFAULT_DEPLOYMENT_FILE = "deployment/foundry_agents.json"
-DEFAULT_AGENT_KEY = "inventory_agent"
+DEFAULT_AGENT_KEY = "supervisor_agent"
 DEFAULT_OBSERVABILITY_LOG = "logs/streamlit_foundry_events.jsonl"
 
 
@@ -164,10 +164,14 @@ with st.sidebar:
             value=os.getenv("FOUNDRY_AGENT_KEY", DEFAULT_AGENT_KEY),
         )
         detected_agent_id = _load_foundry_agent_id(deployment_file, agent_key)
+        key_specific_agent_id = os.getenv(f"FOUNDRY_{agent_key.upper()}_ID", "")
         agent_id = st.text_input(
             "Foundry Agent ID",
-            value=os.getenv("FOUNDRY_AGENT_ID", detected_agent_id or ""),
-            help="Pode ser carregado automaticamente de deployment/foundry_agents.json.",
+            value=os.getenv("FOUNDRY_AGENT_ID", key_specific_agent_id or detected_agent_id or ""),
+            help=(
+                "Pode vir de FOUNDRY_AGENT_ID, de uma variável específica como "
+                "FOUNDRY_SUPERVISOR_AGENT_ID, ou de deployment/foundry_agents.json."
+            ),
         )
 
         if detected_agent_id:

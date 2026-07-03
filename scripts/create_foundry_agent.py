@@ -13,17 +13,66 @@ load_dotenv()
 PROJECT_ENDPOINT = os.getenv("AZURE_AI_PROJECT_ENDPOINT")
 MODEL_DEPLOYMENT = os.getenv("FOUNDRY_AGENT_MODEL", "gpt-4.1")
 
-OPENAPI_SPEC_PATH = "openapi/foundry_inventory_tools.openapi.json"
-DEPLOYMENT_FILE = Path("deployment/foundry_agents.json")
+# Supported profiles:
+# - supervisor_agent: Foundry agent calls the Supervisor /copilot endpoint.
+# - inventory_agent: Foundry agent calls Inventory OpenAPI tools directly.
+# - supplier_agent: Foundry agent calls Supplier OpenAPI tools directly.
+AGENT_KEY = os.getenv("FOUNDRY_AGENT_KEY", "supervisor_agent")
+DEPLOYMENT_FILE = Path(os.getenv("FOUNDRY_AGENT_DEPLOYMENT_FILE", "deployment/foundry_agents.json"))
 
-AGENT_KEY = "inventory_agent"
-AGENT_NAME = "inventory-agent-openapi"
+AGENT_PROFILES = {
+    "supervisor_agent": {
+        "name": "supply-chain-supervisor-openapi",
+        "tool_name": "supervisor_tools",
+        "openapi_spec_path": "openapi/foundry_supervisor_tools.openapi.json",
+        "description": "Supervisor tool for multi-agent supply chain orchestration through Inventory and Supplier specialists.",
+        "instructions": (
+            "Você é um assistente corporativo de supply chain. "
+            "Use a ferramenta OpenAPI do Supervisor sempre que o usuário fizer perguntas sobre estoque, produtos, fornecedores, contratos, performance, risco ou perguntas híbridas. "
+            "O Supervisor decide quando consultar Inventory, Supplier ou ambos. "
+            "Responda em português, de forma objetiva, com base nos dados retornados pela ferramenta."
+        ),
+    },
+    "inventory_agent": {
+        "name": "inventory-agent-openapi",
+        "tool_name": "inventory_tools",
+        "openapi_spec_path": "openapi/foundry_inventory_tools.openapi.json",
+        "description": "Inventory API tools for product, supplier and purchasing policy lookup.",
+        "instructions": (
+            "Você é um agente especialista em estoque e suprimentos. "
+            "Use as ferramentas OpenAPI de inventário sempre que o usuário perguntar "
+            "sobre produtos, fornecedores, políticas de estoque ou políticas de compra. "
+            "Responda em português, de forma objetiva e baseada nos dados retornados pelas ferramentas."
+        ),
+    },
+    "supplier_agent": {
+        "name": "supplier-agent-openapi",
+        "tool_name": "supplier_tools",
+        "openapi_spec_path": "openapi/foundry_supplier_tools.openapi.json",
+        "description": "Supplier API tools for supplier profile, products, contracts and performance lookup.",
+        "instructions": (
+            "Você é um agente especialista em fornecedores e compras. "
+            "Use as ferramentas OpenAPI de supplier sempre que o usuário perguntar sobre fornecedores, contratos, performance, risco, buyer, localização, SLA, lead time ou produtos fornecidos. "
+            "Responda em português, de forma objetiva e baseada nos dados retornados pelas ferramentas."
+        ),
+    },
+}
 
 if not PROJECT_ENDPOINT:
     raise ValueError("AZURE_AI_PROJECT_ENDPOINT não foi definido no .env")
 
-print("Carregando OpenAPI enxuto...")
-with open(OPENAPI_SPEC_PATH, "r", encoding="utf-8") as f:
+if AGENT_KEY not in AGENT_PROFILES:
+    raise ValueError(
+        f"FOUNDRY_AGENT_KEY inválido: {AGENT_KEY}. "
+        f"Use um destes valores: {', '.join(AGENT_PROFILES)}"
+    )
+
+profile = AGENT_PROFILES[AGENT_KEY]
+openapi_spec_path = profile["openapi_spec_path"]
+
+print(f"Perfil selecionado: {AGENT_KEY}")
+print(f"Carregando OpenAPI: {openapi_spec_path}")
+with open(openapi_spec_path, "r", encoding="utf-8") as f:
     openapi_spec = jsonref.loads(f.read())
 
 print("Conectando ao Azure AI Foundry...")
@@ -33,22 +82,17 @@ client = AgentsClient(
 )
 
 openapi_tool = OpenApiTool(
-    name="inventory_tools",
+    name=profile["tool_name"],
     spec=openapi_spec,
-    description="Inventory API tools for product, supplier and purchasing policy lookup.",
+    description=profile["description"],
     auth=OpenApiAnonymousAuthDetails(),
 )
 
 print("Criando agente...")
 agent = client.create_agent(
     model=MODEL_DEPLOYMENT,
-    name=AGENT_NAME,
-    instructions=(
-        "Você é um agente especialista em estoque e suprimentos. "
-        "Use as ferramentas OpenAPI de inventário sempre que o usuário perguntar "
-        "sobre produtos, fornecedores, políticas de estoque ou políticas de compra. "
-        "Responda em português, de forma objetiva e baseada nos dados retornados pelas ferramentas."
-    ),
+    name=profile["name"],
+    instructions=profile["instructions"],
     tools=openapi_tool.definitions,
 )
 
@@ -66,5 +110,6 @@ DEPLOYMENT_FILE.write_text(
 )
 
 print("Agente criado com sucesso!")
+print(f"Agent key: {AGENT_KEY}")
 print(f"Agent ID: {agent.id}")
 print(f"ID salvo em: {DEPLOYMENT_FILE}")

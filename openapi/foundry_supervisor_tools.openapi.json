@@ -1,0 +1,103 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Supervisor Multi-Agent Supply Chain API",
+    "version": "0.2.0",
+    "description": "Foundry-compatible OpenAPI schema for the Supervisor Agent. It exposes a single copilot endpoint that orchestrates Inventory and Supplier specialists."
+  },
+  "servers": [
+    {
+      "url": "https://supervisor-agent.politedune-38af7eb9.brazilsouth.azurecontainerapps.io"
+    }
+  ],
+  "paths": {
+    "/copilot": {
+      "post": {
+        "operationId": "askSupplyChainSupervisor",
+        "summary": "Ask Supply Chain Supervisor",
+        "description": "Send a supply chain question to the Supervisor Agent. The Supervisor routes to Inventory, Supplier, or both, then returns a consolidated answer.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CopilotRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CopilotResponse"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation error"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "operationId": "getSupervisorHealth",
+        "summary": "Supervisor Health",
+        "description": "Return Supervisor health and available routing capabilities.",
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "CopilotRequest": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "User question about inventory, suppliers, contracts, performance or hybrid supply chain topics."
+          }
+        }
+      },
+      "CopilotResponse": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": "string",
+            "description": "Final answer produced by the Supervisor."
+          },
+          "trace_id": {
+            "type": "string",
+            "description": "Trace identifier for observability."
+          },
+          "validation_passed": {
+            "type": "boolean",
+            "nullable": true
+          },
+          "validation_reason": {
+            "type": "string",
+            "nullable": true
+          }
+        }
+      }
+    }
+  }
+}
