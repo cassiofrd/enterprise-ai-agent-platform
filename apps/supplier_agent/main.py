@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import time
 import re
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -24,6 +26,65 @@ from shared.llm import get_chat_llm
 
 
 app = FastAPI(title="Supplier Agent API")
+
+
+SUPPLIER_REFERENCE_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "supplier_reference_data.json"
+
+
+def load_supplier_reference_data() -> dict:
+    with SUPPLIER_REFERENCE_DATA_PATH.open("r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+SUPPLIER_REFERENCE_DATA = load_supplier_reference_data()
+
+
+def normalize_supplier_name(name: str) -> str:
+    return " ".join(name.strip().lower().split())
+
+
+def find_supplier(name: str) -> tuple[str, dict] | tuple[None, None]:
+    normalized = normalize_supplier_name(name)
+    for supplier_name, supplier in SUPPLIER_REFERENCE_DATA.items():
+        aliases = {
+            normalize_supplier_name(supplier_name),
+            normalize_supplier_name(supplier.get("legal_name", "")),
+        }
+        if normalized in aliases:
+            return supplier_name, supplier
+    return None, None
+
+
+def supplier_summary(name: str, supplier: dict) -> dict:
+    return {
+        "supplier_name": name,
+        "supplier_id": supplier["supplier_id"],
+        "legal_name": supplier["legal_name"],
+        "city": supplier["city"],
+        "state": supplier["state"],
+        "country": supplier["country"],
+        "rating": supplier["rating"],
+        "risk_level": supplier["risk_level"],
+        "payment_terms": supplier["payment_terms"],
+        "buyer": supplier["buyer"],
+        "average_lead_time_days": supplier["average_lead_time_days"],
+        "products": supplier["products"],
+        "source": "structured_supplier_reference_data",
+    }
+
+
+def log_supplier_api_call(*, endpoint: str, tool_operation: str, status: str, http_status_code: int, start: float, **fields):
+    log_event(
+        "api.openapi_tool.call",
+        agent="supplier",
+        endpoint=endpoint,
+        method="GET",
+        status=status,
+        http_status_code=http_status_code,
+        latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        tool_operation=tool_operation,
+        **fields,
+    )
 
 
 def get_latest_human_message(messages: list[BaseMessage]) -> str:
@@ -455,6 +516,170 @@ def invoke_supplier_agent(request: SupplierRequest):
     }
 
 
+
+@app.get("/suppliers")
+def get_suppliers():
+    start = time.perf_counter()
+    suppliers = [
+        supplier_summary(name, supplier)
+        for name, supplier in SUPPLIER_REFERENCE_DATA.items()
+    ]
+    log_supplier_api_call(
+        endpoint="/suppliers",
+        tool_operation="listSuppliers",
+        status="success",
+        http_status_code=200,
+        start=start,
+        result_count=len(suppliers),
+    )
+    return {
+        "agent": "supplier",
+        "suppliers": suppliers,
+    }
+
+
+@app.get("/suppliers/{supplier_name}")
+def get_supplier(supplier_name: str):
+    start = time.perf_counter()
+    canonical_name, supplier = find_supplier(supplier_name)
+    if not supplier:
+        log_supplier_api_call(
+            endpoint="/suppliers/{supplier_name}",
+            tool_operation="getSupplier",
+            status="error",
+            http_status_code=404,
+            start=start,
+            supplier_name=supplier_name,
+            error_message=f"Supplier not found: {supplier_name}",
+        )
+        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+
+    payload = supplier_summary(canonical_name, supplier)
+    log_supplier_api_call(
+        endpoint="/suppliers/{supplier_name}",
+        tool_operation="getSupplier",
+        status="success",
+        http_status_code=200,
+        start=start,
+        supplier_name=canonical_name,
+        supplier_id=supplier["supplier_id"],
+    )
+    return {
+        "agent": "supplier",
+        "supplier": payload,
+    }
+
+
+@app.get("/suppliers/{supplier_name}/products")
+def get_supplier_products(supplier_name: str):
+    start = time.perf_counter()
+    canonical_name, supplier = find_supplier(supplier_name)
+    if not supplier:
+        log_supplier_api_call(
+            endpoint="/suppliers/{supplier_name}/products",
+            tool_operation="getSupplierProducts",
+            status="error",
+            http_status_code=404,
+            start=start,
+            supplier_name=supplier_name,
+            error_message=f"Supplier not found: {supplier_name}",
+        )
+        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+
+    products = supplier["products"]
+    log_supplier_api_call(
+        endpoint="/suppliers/{supplier_name}/products",
+        tool_operation="getSupplierProducts",
+        status="success",
+        http_status_code=200,
+        start=start,
+        supplier_name=canonical_name,
+        supplier_id=supplier["supplier_id"],
+        result_count=len(products),
+    )
+    return {
+        "agent": "supplier",
+        "supplier_name": canonical_name,
+        "products": products,
+        "source": "structured_supplier_reference_data",
+    }
+
+
+@app.get("/suppliers/{supplier_name}/contracts")
+def get_supplier_contracts(supplier_name: str):
+    start = time.perf_counter()
+    canonical_name, supplier = find_supplier(supplier_name)
+    if not supplier:
+        log_supplier_api_call(
+            endpoint="/suppliers/{supplier_name}/contracts",
+            tool_operation="getSupplierContracts",
+            status="error",
+            http_status_code=404,
+            start=start,
+            supplier_name=supplier_name,
+            error_message=f"Supplier not found: {supplier_name}",
+        )
+        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+
+    contracts = supplier["contracts"]
+    log_supplier_api_call(
+        endpoint="/suppliers/{supplier_name}/contracts",
+        tool_operation="getSupplierContracts",
+        status="success",
+        http_status_code=200,
+        start=start,
+        supplier_name=canonical_name,
+        supplier_id=supplier["supplier_id"],
+        result_count=len(contracts),
+    )
+    return {
+        "agent": "supplier",
+        "supplier_name": canonical_name,
+        "contracts": contracts,
+        "source": "structured_supplier_reference_data",
+    }
+
+
+@app.get("/suppliers/{supplier_name}/performance")
+def get_supplier_performance(supplier_name: str):
+    start = time.perf_counter()
+    canonical_name, supplier = find_supplier(supplier_name)
+    if not supplier:
+        log_supplier_api_call(
+            endpoint="/suppliers/{supplier_name}/performance",
+            tool_operation="getSupplierPerformance",
+            status="error",
+            http_status_code=404,
+            start=start,
+            supplier_name=supplier_name,
+            error_message=f"Supplier not found: {supplier_name}",
+        )
+        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+
+    performance = {
+        "rating": supplier["rating"],
+        "risk_level": supplier["risk_level"],
+        "sla_on_time_delivery_percent": supplier["sla_on_time_delivery_percent"],
+        "quality_score": supplier["quality_score"],
+        "average_lead_time_days": supplier["average_lead_time_days"],
+    }
+    log_supplier_api_call(
+        endpoint="/suppliers/{supplier_name}/performance",
+        tool_operation="getSupplierPerformance",
+        status="success",
+        http_status_code=200,
+        start=start,
+        supplier_name=canonical_name,
+        supplier_id=supplier["supplier_id"],
+    )
+    return {
+        "agent": "supplier",
+        "supplier_name": canonical_name,
+        "performance": performance,
+        "source": "structured_supplier_reference_data",
+    }
+
+
 @app.get("/metrics")
 def metrics():
     return {
@@ -543,5 +768,8 @@ def health():
             "supplier_risk",
             "supplier_comparison",
             "alternate_supplier_recommendation",
+            "supplier_rest_api",
+            "supplier_contract_lookup",
+            "supplier_performance_lookup",
         ],
     }

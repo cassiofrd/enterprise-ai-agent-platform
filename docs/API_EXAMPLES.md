@@ -133,3 +133,17 @@ GET /metrics
 ```
 
 and are displayed in the Streamlit Observability page.
+
+## Supplier Agent REST endpoints
+
+The Supplier Agent also exposes deterministic REST endpoints that can be consumed by applications, OpenAPI tools, or other agents.
+
+```bash
+curl http://localhost:8002/suppliers
+curl http://localhost:8002/suppliers/XYZ%20Metais
+curl http://localhost:8002/suppliers/XYZ%20Metais/products
+curl http://localhost:8002/suppliers/XYZ%20Metais/contracts
+curl http://localhost:8002/suppliers/XYZ%20Metais/performance
+```
+
+These endpoints emit `api.openapi_tool.call` observability events with `agent="supplier"`, the endpoint path, operation name, HTTP status, latency, and relevant supplier fields.

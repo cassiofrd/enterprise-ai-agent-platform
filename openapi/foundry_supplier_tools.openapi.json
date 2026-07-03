@@ -1,0 +1,239 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Supplier Agent Tools",
+    "version": "1.0.0",
+    "description": "OpenAPI tool schema for supplier management lookup in Azure AI Foundry."
+  },
+  "servers": [
+    {
+      "url": "https://supplier-agent.politedune-38af7eb9.brazilsouth.azurecontainerapps.io"
+    }
+  ],
+  "paths": {
+    "/suppliers": {
+      "get": {
+        "operationId": "listSuppliers",
+        "summary": "List suppliers",
+        "description": "Returns all known suppliers with summary profile information.",
+        "responses": {
+          "200": {
+            "description": "Suppliers returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierListResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/suppliers/{supplier_name}": {
+      "get": {
+        "operationId": "getSupplier",
+        "summary": "Get supplier profile",
+        "description": "Returns structured profile information for a supplier.",
+        "parameters": [
+          {
+            "name": "supplier_name",
+            "in": "path",
+            "required": true,
+            "description": "Supplier name, for example XYZ Metais.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supplier profile returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/suppliers/{supplier_name}/products": {
+      "get": {
+        "operationId": "getSupplierProducts",
+        "summary": "Get supplier products",
+        "description": "Returns product codes supplied by the specified supplier.",
+        "parameters": [
+          {
+            "name": "supplier_name",
+            "in": "path",
+            "required": true,
+            "description": "Supplier name, for example XYZ Metais.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supplier products returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierProductsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/suppliers/{supplier_name}/contracts": {
+      "get": {
+        "operationId": "getSupplierContracts",
+        "summary": "Get supplier contracts",
+        "description": "Returns active contract information for the specified supplier.",
+        "parameters": [
+          {
+            "name": "supplier_name",
+            "in": "path",
+            "required": true,
+            "description": "Supplier name, for example XYZ Metais.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supplier contracts returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierContractsResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/suppliers/{supplier_name}/performance": {
+      "get": {
+        "operationId": "getSupplierPerformance",
+        "summary": "Get supplier performance",
+        "description": "Returns supplier performance, SLA, quality and risk metrics.",
+        "parameters": [
+          {
+            "name": "supplier_name",
+            "in": "path",
+            "required": true,
+            "description": "Supplier name, for example XYZ Metais.",
+            "schema": { "type": "string" }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supplier performance returned successfully.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SupplierPerformanceResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "SupplierListResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "suppliers": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SupplierSummary" }
+          }
+        }
+      },
+      "SupplierResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "supplier": { "$ref": "#/components/schemas/SupplierSummary" }
+        }
+      },
+      "SupplierProductsResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "supplier_name": { "type": "string" },
+          "products": {
+            "type": "array",
+            "items": { "type": "string" }
+          },
+          "source": { "type": "string" }
+        }
+      },
+      "SupplierContractsResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "supplier_name": { "type": "string" },
+          "contracts": {
+            "type": "array",
+            "items": { "$ref": "#/components/schemas/SupplierContract" }
+          },
+          "source": { "type": "string" }
+        }
+      },
+      "SupplierPerformanceResponse": {
+        "type": "object",
+        "properties": {
+          "agent": { "type": "string" },
+          "supplier_name": { "type": "string" },
+          "performance": { "$ref": "#/components/schemas/SupplierPerformance" },
+          "source": { "type": "string" }
+        }
+      },
+      "SupplierSummary": {
+        "type": "object",
+        "properties": {
+          "supplier_name": { "type": "string" },
+          "supplier_id": { "type": "string" },
+          "legal_name": { "type": "string" },
+          "city": { "type": "string" },
+          "state": { "type": "string" },
+          "country": { "type": "string" },
+          "rating": { "type": "string" },
+          "risk_level": { "type": "string" },
+          "payment_terms": { "type": "string" },
+          "buyer": { "type": "string" },
+          "average_lead_time_days": { "type": "integer" },
+          "products": { "type": "array", "items": { "type": "string" } },
+          "source": { "type": "string" }
+        }
+      },
+      "SupplierContract": {
+        "type": "object",
+        "properties": {
+          "contract_id": { "type": "string" },
+          "status": { "type": "string" },
+          "start_date": { "type": "string" },
+          "end_date": { "type": "string" },
+          "category": { "type": "string" },
+          "manager_approval_required_above_brl": { "type": "number" }
+        }
+      },
+      "SupplierPerformance": {
+        "type": "object",
+        "properties": {
+          "rating": { "type": "string" },
+          "risk_level": { "type": "string" },
+          "sla_on_time_delivery_percent": { "type": "number" },
+          "quality_score": { "type": "number" },
+          "average_lead_time_days": { "type": "integer" }
+        }
+      }
+    }
+  }
+}

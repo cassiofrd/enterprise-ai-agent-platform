@@ -1,0 +1,77 @@
+{
+  "XYZ Metais": {
+    "supplier_id": "SUP001",
+    "legal_name": "XYZ Metais Ltda.",
+    "city": "São Paulo",
+    "state": "SP",
+    "country": "Brasil",
+    "rating": "A",
+    "risk_level": "low",
+    "payment_terms": "30 dias",
+    "buyer": "João Silva",
+    "sla_on_time_delivery_percent": 96.5,
+    "quality_score": 94,
+    "average_lead_time_days": 14,
+    "products": ["PARAFUSO-M20"],
+    "contracts": [
+      {
+        "contract_id": "CTR-XYZ-2026-001",
+        "status": "active",
+        "start_date": "2026-01-01",
+        "end_date": "2026-12-31",
+        "category": "Metais e fixadores",
+        "manager_approval_required_above_brl": 50000
+      }
+    ]
+  },
+  "ABC Industrial": {
+    "supplier_id": "SUP002",
+    "legal_name": "ABC Industrial S.A.",
+    "city": "Belo Horizonte",
+    "state": "MG",
+    "country": "Brasil",
+    "rating": "B",
+    "risk_level": "medium",
+    "payment_terms": "45 dias",
+    "buyer": "Maria Souza",
+    "sla_on_time_delivery_percent": 89.2,
+    "quality_score": 88,
+    "average_lead_time_days": 21,
+    "products": ["ROLAMENTO-X5"],
+    "contracts": [
+      {
+        "contract_id": "CTR-ABC-2026-002",
+        "status": "active",
+        "start_date": "2026-02-01",
+        "end_date": "2026-11-30",
+        "category": "Componentes industriais",
+        "manager_approval_required_above_brl": 50000
+      }
+    ]
+  },
+  "Delta Borrachas": {
+    "supplier_id": "SUP003",
+    "legal_name": "Delta Borrachas Ltda.",
+    "city": "Curitiba",
+    "state": "PR",
+    "country": "Brasil",
+    "rating": "B+",
+    "risk_level": "low",
+    "payment_terms": "30 dias",
+    "buyer": "Ana Pereira",
+    "sla_on_time_delivery_percent": 93.1,
+    "quality_score": 91,
+    "average_lead_time_days": 10,
+    "products": ["VEDACAO-BR10"],
+    "contracts": [
+      {
+        "contract_id": "CTR-DEL-2026-003",
+        "status": "active",
+        "start_date": "2026-03-01",
+        "end_date": "2027-02-28",
+        "category": "Vedações e borrachas",
+        "manager_approval_required_above_brl": 50000
+      }
+    ]
+  }
+}
