@@ -36,7 +36,13 @@ from shared.observability import (
     observe_duration,
 )
 from shared.schemas import InventoryRequest
-from shared.azure_search import azure_search_enabled, format_search_results, search_supply_chain_docs
+from shared.azure_search import (
+    azure_search_enabled,
+    azure_search_status,
+    format_search_results,
+    lookup_structured_entity,
+    search_supply_chain_docs,
+)
 from shared.llm import get_chat_llm, get_embeddings
 
 
@@ -107,8 +113,39 @@ def normalize_product_code(code: str) -> str:
     return code.strip().replace("_", "-").upper()
 
 
+def get_product_from_azure_search(code: str) -> dict | None:
+    """Return product data from Azure AI Search when configured.
+
+    This is the first step toward replacing local demo dictionaries with a
+    searchable corporate knowledge layer. The local PRODUCT_CATALOG remains the
+    deterministic fallback for local development and automated tests.
+    """
+    normalized_code = normalize_product_code(code)
+    product = lookup_structured_entity(
+        entity_type="product",
+        entity_id=normalized_code,
+        agent="inventory",
+    )
+    if not product:
+        return None
+
+    return {
+        "code": product.get("code", normalized_code),
+        "product_name": product.get("product_name", normalized_code),
+        "abc_class": product.get("abc_class", "C"),
+        "preferred_supplier": product.get("preferred_supplier"),
+        "lead_time_days": product.get("lead_time_days"),
+        "source": product.get("source", "azure_ai_search"),
+    }
+
+
 def get_product_or_404(code: str) -> dict:
     normalized_code = normalize_product_code(code)
+
+    product = get_product_from_azure_search(normalized_code)
+    if product is not None:
+        return product
+
     product = PRODUCT_CATALOG.get(normalized_code)
     if product is None:
         raise HTTPException(
@@ -151,7 +188,7 @@ def build_product_payload(product: dict) -> dict:
     return {
         **product,
         "inventory_policy": policy,
-        "source": "structured_inventory_reference_data",
+        "source": product.get("source", "structured_inventory_reference_data"),
     }
 
 
@@ -979,7 +1016,7 @@ def get_inventory_policy(code: str):
             "product_code": product["code"],
             "abc_class": abc_class,
             "policy": policy,
-            "source": "structured_inventory_reference_data",
+            "source": product.get("source", "structured_inventory_reference_data"),
         }
 
         latency_ms = (time.perf_counter() - start) * 1000
@@ -1086,6 +1123,16 @@ def get_purchasing_policy():
     return payload
 
 
+@app.get("/data-source-status")
+def data_source_status():
+    return {
+        "agent": "inventory",
+        "structured_data_source": "azure_ai_search" if azure_search_enabled() else "local_reference_data",
+        "local_fallback_enabled": True,
+        "azure_ai_search": azure_search_status(),
+    }
+
+
 @app.get("/memories")
 def memories(limit: int = Query(default=50, ge=1, le=200)):
     return {
@@ -1146,6 +1193,7 @@ def health():
         "agent": "inventory",
         "rag": "vector-faiss",
         "azure_ai_search": "enabled" if azure_search_enabled() else "disabled",
+        "azure_ai_search_status": azure_search_status(),
         "azure_ai_search_endpoint": AZURE_SEARCH_ENDPOINT,
         "azure_ai_search_index": AZURE_SEARCH_INDEX_NAME,
         "mcp": "enabled",

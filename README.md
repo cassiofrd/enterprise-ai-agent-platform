@@ -443,3 +443,23 @@ python scripts/create_foundry_agent.py
 $env:FOUNDRY_AGENT_KEY="supplier_agent"
 python scripts/create_foundry_agent.py
 ```
+
+
+## Azure AI Search structured knowledge layer
+
+Inventory and Supplier endpoints can now use Azure AI Search as an optional structured knowledge source. If Azure AI Search is configured, the APIs first look up indexed business entities such as products and suppliers. If it is not configured, the project falls back to local reference data, so tests and local demos continue to work.
+
+Bootstrap the demo index:
+
+```powershell
+python scripts/bootstrap_azure_search.py
+```
+
+Check the active data source:
+
+```powershell
+curl.exe http://localhost:8001/data-source-status
+curl.exe http://localhost:8002/data-source-status
+```
+
+See `docs/AZURE_AI_SEARCH.md` for details.

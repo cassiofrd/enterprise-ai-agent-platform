@@ -21,7 +21,13 @@ from shared.observability import (
     observe_duration,
 )
 from shared.schemas import SupplierRequest
-from shared.azure_search import azure_search_enabled, format_search_results, search_supply_chain_docs
+from shared.azure_search import (
+    azure_search_enabled,
+    azure_search_status,
+    format_search_results,
+    lookup_structured_entity,
+    search_supply_chain_docs,
+)
 from shared.llm import get_chat_llm
 
 
@@ -43,8 +49,34 @@ def normalize_supplier_name(name: str) -> str:
     return " ".join(name.strip().lower().split())
 
 
+def find_supplier_in_azure_search(name: str) -> tuple[str, dict] | tuple[None, None]:
+    """Return supplier data from Azure AI Search when configured.
+
+    Local JSON remains the fallback for development and tests. In production, the
+    same REST endpoints can be backed by indexed supplier profiles, contracts,
+    and performance documents.
+    """
+    normalized = normalize_supplier_name(name).upper()
+    supplier = lookup_structured_entity(
+        entity_type="supplier",
+        entity_id=normalized,
+        agent="supplier",
+    )
+    if not supplier:
+        return None, None
+
+    canonical_name = supplier.get("supplier_name") or name
+    supplier.setdefault("source", "azure_ai_search")
+    return canonical_name, supplier
+
+
 def find_supplier(name: str) -> tuple[str, dict] | tuple[None, None]:
     normalized = normalize_supplier_name(name)
+
+    azure_name, azure_supplier = find_supplier_in_azure_search(name)
+    if azure_supplier:
+        return azure_name, azure_supplier
+
     for supplier_name, supplier in SUPPLIER_REFERENCE_DATA.items():
         aliases = {
             normalize_supplier_name(supplier_name),
@@ -69,7 +101,7 @@ def supplier_summary(name: str, supplier: dict) -> dict:
         "buyer": supplier["buyer"],
         "average_lead_time_days": supplier["average_lead_time_days"],
         "products": supplier["products"],
-        "source": "structured_supplier_reference_data",
+        "source": supplier.get("source", "structured_supplier_reference_data"),
     }
 
 
@@ -680,6 +712,16 @@ def get_supplier_performance(supplier_name: str):
     }
 
 
+@app.get("/data-source-status")
+def data_source_status():
+    return {
+        "agent": "supplier",
+        "structured_data_source": "azure_ai_search" if azure_search_enabled() else "local_reference_data",
+        "local_fallback_enabled": True,
+        "azure_ai_search": azure_search_status(),
+    }
+
+
 @app.get("/metrics")
 def metrics():
     return {
@@ -761,6 +803,7 @@ def health():
         "observability": "jsonl",
         "memory": "sqlite",
         "azure_ai_search": "enabled" if azure_search_enabled() else "disabled",
+        "azure_ai_search_status": azure_search_status(),
         "azure_ai_search_endpoint": AZURE_SEARCH_ENDPOINT,
         "azure_ai_search_index": AZURE_SEARCH_INDEX_NAME,
         "capabilities": [

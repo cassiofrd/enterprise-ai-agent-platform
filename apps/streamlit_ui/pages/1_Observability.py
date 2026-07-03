@@ -1,5 +1,9 @@
 from __future__ import annotations
 
+import json
+import os
+from pathlib import Path
+
 import requests
 import pandas as pd
 import streamlit as st
@@ -25,6 +29,8 @@ SUPPLIER_MEMORIES_URL = (
     "https://supplier-agent.politedune-38af7eb9.brazilsouth.azurecontainerapps.io/memories"
 )
 
+DEFAULT_STREAMLIT_LOG = "logs/streamlit_foundry_events.jsonl"
+
 METRIC_URLS = {
     "supervisor": SUPERVISOR_METRICS_URL,
     "inventory": INVENTORY_METRICS_URL,
@@ -47,6 +53,22 @@ st.title("📊 Supply Chain Multi-Agent Observability")
 st.caption(
     "Metrics, traces, memory and cost monitoring for Supervisor, Inventory and Supplier agents."
 )
+
+
+def load_jsonl(path: str) -> list[dict]:
+    rows: list[dict] = []
+    log_path = Path(path)
+    if not log_path.exists():
+        return rows
+
+    for line in log_path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
 
 
 def fetch_json(url: str) -> dict:
@@ -104,6 +126,41 @@ def contains_any_agent(row: pd.Series, selected_agents: list[str]) -> bool:
     ).lower()
     return any(agent.lower() in haystack for agent in selected_agents)
 
+
+streamlit_log_path = os.getenv("STREAMLIT_OBSERVABILITY_LOG", DEFAULT_STREAMLIT_LOG)
+streamlit_events = load_jsonl(streamlit_log_path)
+
+st.subheader("Frontend execution history")
+if streamlit_events:
+    streamlit_df = pd.DataFrame(streamlit_events).sort_values("started_at", ascending=False)
+    latest_frontend = streamlit_df.iloc[0].to_dict()
+
+    f1, f2, f3, f4 = st.columns(4)
+    f1.metric("Frontend runs", len(streamlit_df))
+    f2.metric("Last backend", str(latest_frontend.get("backend", "n/a")))
+    f3.metric("Last status", str(latest_frontend.get("status", "n/a")))
+    f4.metric("Last duration", f"{float(latest_frontend.get('duration_seconds') or 0):.2f}s")
+
+    preferred_frontend_cols = [
+        "started_at",
+        "backend",
+        "status",
+        "agent_key",
+        "orchestration_mode",
+        "duration_seconds",
+        "trace_id",
+        "run_id",
+        "tool_endpoint",
+        "supervisor_url",
+        "question",
+    ]
+    visible_frontend_cols = [col for col in preferred_frontend_cols if col in streamlit_df.columns]
+    st.dataframe(streamlit_df[visible_frontend_cols], use_container_width=True, height=260)
+
+    with st.expander("Latest frontend execution details"):
+        st.json(latest_frontend)
+else:
+    st.info(f"No Streamlit execution log found yet at {streamlit_log_path}.")
 
 payloads = {
     agent: safe_fetch(agent, url)
