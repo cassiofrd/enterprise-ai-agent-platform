@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 import operator
+import re
 import time
+from urllib.parse import quote
 from typing import Annotated, Literal, Optional, Sequence, TypedDict
 
 import requests
@@ -59,6 +61,7 @@ class AgentState(TypedDict):
     validation_passed: Optional[bool]
     validation_reason: Optional[str]
     validation_attempts: int
+    selected_route: Optional[str]
 
 
 def supervisor_node(state: AgentState):
@@ -74,11 +77,11 @@ def supervisor_node(state: AgentState):
         "- supplier: Handles supplier risk, supplier comparison, supplier alternatives, lead time, SLA, vendor reliability, procurement recommendations, and supplier-specific memory.\n\n"
         "Routing rules:\n"
         "- Route questions about stock levels, reorder policy, backorders, inventory thresholds, warehouse policy, or SKU inventory operations to inventory.\n"
-        "- Route questions about supplier risk, vendor evaluation, supplier comparison, alternate suppliers, supplier SLA, lead time, or procurement supplier recommendations to supplier.\n"
-        "- If the user asks to remember a preferred supplier for a SKU, route to inventory for now, because preferred supplier memory is currently stored in the inventory memory layer.\n"
-        "- If both inventory and supplier could help, choose the specialist that best matches the user's primary intent.\n\n"
-        "Based on the user query, select ONE available team member to handle it.\n"
-        "Output ONLY one of these names: inventory or supplier. Do not output anything else.\n\n"
+        "- Route questions about supplier risk, vendor evaluation, supplier comparison, alternate suppliers, supplier SLA, lead time, contracts, buyer, payment terms, or procurement supplier recommendations to supplier.\n"
+        "- Route hybrid questions that require both product/inventory data and supplier/vendor data to both.\n"
+        "- If the user asks to remember a preferred supplier for a SKU, route to inventory for now, because preferred supplier memory is currently stored in the inventory memory layer.\n\n"
+        "Based on the user query, select the best route.\n"
+        "Output ONLY one of these names: inventory, supplier, or both. Do not output anything else.\n\n"
         f"OPERATION: {operation_json}"
     )
 
@@ -100,12 +103,13 @@ def supervisor_node(state: AgentState):
     )
 
     route = response.content.strip().lower()
-    log_event("agent.supervisor.route", trace_id=trace_id, route=route)
+    log_event("supervisor.route.selected", trace_id=trace_id, route=route)
 
     return {
         "messages": [AIMessage(content=route)],
         "trace_id": trace_id,
         "validation_attempts": state.get("validation_attempts", 0),
+        "selected_route": route,
     }
 
 
@@ -135,6 +139,12 @@ def call_specialist_agent(
         "a2a.request",
         trace_id=trace_id,
         target=target_agent,
+        url=target_url,
+    )
+    log_event(
+        f"supervisor.agent_call.{target_agent}.start",
+        trace_id=trace_id,
+        target_agent=target_agent,
         url=target_url,
     )
 
@@ -197,6 +207,12 @@ def call_specialist_agent(
         "a2a.response",
         trace_id=trace_id,
         target=target_agent,
+        response_preview=specialist_response[:500],
+    )
+    log_event(
+        f"supervisor.agent_call.{target_agent}.success",
+        trace_id=trace_id,
+        target_agent=target_agent,
         response_preview=specialist_response[:500],
     )
 
@@ -343,6 +359,219 @@ def supplier_node(state: AgentState):
         return {"messages": [AIMessage(content=fallback_message)], "trace_id": trace_id}
 
 
+
+def _service_base_url(agent_url: str) -> str:
+    """Return the base URL for a specialist service from its conversational endpoint."""
+    clean_url = agent_url.rstrip("/")
+    for suffix in ("/invoke", "/copilot", "/chat"):
+        if clean_url.endswith(suffix):
+            return clean_url[: -len(suffix)]
+    return clean_url
+
+
+def _extract_product_code(text: str) -> Optional[str]:
+    """Extract a product/SKU-like code from a natural-language question."""
+    match = re.search(r"\b[A-ZÁÉÍÓÚÂÊÔÃÕÇ0-9]+-[A-Z0-9]+\b", text.upper())
+    return match.group(0) if match else None
+
+
+def _structured_get(
+    *,
+    base_url: str,
+    path: str,
+    trace_id: str,
+    tool_operation: str,
+    timeout_seconds: int = 30,
+) -> dict:
+    """Call a deterministic REST endpoint and return JSON data."""
+    url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+
+    log_event(
+        "supervisor.structured_tool.request",
+        trace_id=trace_id,
+        url=url,
+        tool_operation=tool_operation,
+    )
+
+    start = time.perf_counter()
+    response = requests.get(url, timeout=timeout_seconds)
+    latency_ms = round((time.perf_counter() - start) * 1000, 2)
+
+    log_event(
+        "supervisor.structured_tool.response",
+        trace_id=trace_id,
+        url=url,
+        tool_operation=tool_operation,
+        http_status_code=response.status_code,
+        latency_ms=latency_ms,
+    )
+
+    response.raise_for_status()
+    return response.json()
+
+
+def _format_inventory_policy(policy: dict) -> str:
+    if not policy:
+        return "política de estoque não encontrada"
+
+    parts = []
+    if policy.get("safety_stock_units") is not None:
+        parts.append(f"estoque de segurança de {policy['safety_stock_units']} unidades")
+    if policy.get("critical_level_units") is not None:
+        parts.append(f"nível crítico de {policy['critical_level_units']} unidades")
+    if policy.get("replenishment_frequency"):
+        parts.append(f"reposição {policy['replenishment_frequency']}")
+    if policy.get("review_frequency"):
+        parts.append(f"revisão {policy['review_frequency']}")
+
+    return ", ".join(parts) if parts else "política de estoque não encontrada"
+
+
+def multi_agent_node(state: AgentState):
+    """Answer hybrid questions using deterministic REST endpoints from both specialists."""
+    trace_id = state.get("trace_id") or new_trace_id()
+    user_messages = [m.content for m in state["messages"] if m.type == "human"]
+    user_question = user_messages[-1] if user_messages else ""
+    product_code = _extract_product_code(user_question)
+
+    log_event(
+        "supervisor.multi_agent.start",
+        trace_id=trace_id,
+        route="both",
+        question_preview=user_question[:500],
+        product_code=product_code,
+        strategy="structured_rest",
+    )
+
+    if not product_code:
+        fallback_message = (
+            "Não consegui identificar um código de produto na pergunta. "
+            "Informe um código como PARAFUSO-M20 para que eu consulte estoque e fornecedor."
+        )
+        log_event(
+            "supervisor.multi_agent.missing_product_code",
+            trace_id=trace_id,
+            question_preview=user_question[:500],
+        )
+        return {
+            "messages": [AIMessage(content=fallback_message)],
+            "trace_id": trace_id,
+            "selected_route": "both",
+        }
+
+    inventory_base_url = _service_base_url(INVENTORY_AGENT_URL)
+    supplier_base_url = _service_base_url(SUPPLIER_AGENT_URL)
+
+    product_payload: dict = {}
+    policy_payload: dict = {}
+    supplier_payload: dict = {}
+    errors: list[str] = []
+
+    try:
+        product_payload = _structured_get(
+            base_url=inventory_base_url,
+            path=f"/products/{quote(product_code)}",
+            trace_id=trace_id,
+            tool_operation="getProduct",
+        )
+    except Exception as exc:
+        errors.append(f"produto {product_code}: {exc}")
+        log_event(
+            "supervisor.multi_agent.structured_inventory_product.error",
+            trace_id=trace_id,
+            product_code=product_code,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+
+    try:
+        policy_payload = _structured_get(
+            base_url=inventory_base_url,
+            path=f"/inventory-policy/{quote(product_code)}",
+            trace_id=trace_id,
+            tool_operation="getInventoryPolicy",
+        )
+    except Exception as exc:
+        errors.append(f"política de estoque {product_code}: {exc}")
+        log_event(
+            "supervisor.multi_agent.structured_inventory_policy.error",
+            trace_id=trace_id,
+            product_code=product_code,
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+        )
+
+    product = product_payload.get("product", {}) if isinstance(product_payload, dict) else {}
+    supplier_name = product.get("preferred_supplier")
+
+    if supplier_name:
+        try:
+            supplier_payload = _structured_get(
+                base_url=supplier_base_url,
+                path=f"/suppliers/{quote(supplier_name)}",
+                trace_id=trace_id,
+                tool_operation="getSupplier",
+            )
+        except Exception as exc:
+            errors.append(f"fornecedor {supplier_name}: {exc}")
+            log_event(
+                "supervisor.multi_agent.structured_supplier.error",
+                trace_id=trace_id,
+                supplier_name=supplier_name,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+
+    policy = product.get("inventory_policy") or policy_payload.get("inventory_policy", {})
+    supplier = supplier_payload.get("supplier", {}) if isinstance(supplier_payload, dict) else {}
+
+    if not product and not policy_payload:
+        answer = (
+            f"Não encontrei dados estruturados para o produto {product_code}. "
+            "Não foi possível consolidar fornecedor e política de estoque."
+        )
+    else:
+        answer_lines = [f"O produto {product_code} é fornecido por {supplier_name or 'fornecedor não encontrado'}."]
+
+        if supplier:
+            supplier_details = []
+            if supplier.get("rating"):
+                supplier_details.append(f"rating {supplier['rating']}")
+            if supplier.get("risk_level"):
+                supplier_details.append(f"risco {supplier['risk_level']}")
+            if supplier.get("city") and supplier.get("state"):
+                supplier_details.append(f"localização {supplier['city']}/{supplier['state']}")
+            if supplier_details:
+                answer_lines.append("Dados do fornecedor: " + ", ".join(supplier_details) + ".")
+
+        abc_class = product.get("abc_class") or policy_payload.get("abc_class")
+        policy_text = _format_inventory_policy(policy)
+        if abc_class:
+            answer_lines.append(f"A classe ABC do item é {abc_class}. A política de estoque define {policy_text}.")
+        else:
+            answer_lines.append(f"A política de estoque define {policy_text}.")
+
+        if errors:
+            answer_lines.append("Alguns dados complementares não foram encontrados: " + "; ".join(errors) + ".")
+
+        answer = " ".join(answer_lines)
+
+    log_event(
+        "supervisor.multi_agent.response",
+        trace_id=trace_id,
+        product_code=product_code,
+        supplier_name=supplier_name,
+        strategy="structured_rest",
+        response_preview=answer[:500],
+    )
+
+    return {
+        "messages": [AIMessage(content=answer)],
+        "trace_id": trace_id,
+        "selected_route": "both",
+    }
+
+
 def validator_node(state: AgentState):
     trace_id = state.get("trace_id") or new_trace_id()
     user_messages = [m.content for m in state["messages"] if m.type == "human"]
@@ -445,7 +674,7 @@ def improve_response_node(state: AgentState):
     return {"messages": [AIMessage(content=response.content)], "trace_id": trace_id}
 
 
-def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier"]:
+def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier", "both"]:
     agent_name = state["messages"][-1].content.strip().lower()
     trace_id = state.get("trace_id") or new_trace_id()
 
@@ -454,6 +683,9 @@ def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier"]:
 
     if agent_name == "supplier":
         return "supplier"
+
+    if agent_name == "both":
+        return "both"
 
     log_event(
         "agent.supervisor.route_fallback",
@@ -468,6 +700,14 @@ def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier"]:
 
 def route_after_validation(state: AgentState) -> Literal["end", "improve"]:
     latest_answer = state["messages"][-1].content.lower()
+
+    if state.get("selected_route") == "both":
+        log_event(
+            "agent.validator.bypass",
+            trace_id=state.get("trace_id") or new_trace_id(),
+            reason="Hybrid structured REST response should not be rewritten by improve_response.",
+        )
+        return "end"
 
     if "long-term memory" in latest_answer:
         log_event(
@@ -489,6 +729,7 @@ def construct_graph():
     g.add_node("supervisor", supervisor_node)
     g.add_node("inventory", inventory_node)
     g.add_node("supplier", supplier_node)
+    g.add_node("both", multi_agent_node)
     g.add_node("validator", validator_node)
     g.add_node("improve_response", improve_response_node)
 
@@ -497,10 +738,11 @@ def construct_graph():
     g.add_conditional_edges(
         "supervisor",
         route_to_specialist,
-        {"inventory": "inventory", "supplier": "supplier"},
+        {"inventory": "inventory", "supplier": "supplier", "both": "both"},
     )
     g.add_edge("inventory", "validator")
     g.add_edge("supplier", "validator")
+    g.add_edge("both", "validator")
     g.add_conditional_edges(
         "validator",
         route_after_validation,
@@ -528,7 +770,7 @@ def health():
     return {
         "status": "ok",
         "agent": "supervisor",
-        "routes": ["inventory", "supplier"],
+        "routes": ["inventory", "supplier", "both"],
     }
 
 
@@ -557,6 +799,7 @@ def chat(request: ChatRequest):
                 "validation_passed": None,
                 "validation_reason": None,
                 "validation_attempts": 0,
+                "selected_route": None,
             }
         )
 
@@ -617,6 +860,7 @@ if __name__ == "__main__":
             "validation_passed": None,
             "validation_reason": None,
             "validation_attempts": 0,
+            "selected_route": None,
         }
     )
 

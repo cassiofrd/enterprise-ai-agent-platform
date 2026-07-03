@@ -147,3 +147,48 @@ curl http://localhost:8002/suppliers/XYZ%20Metais/performance
 ```
 
 These endpoints emit `api.openapi_tool.call` observability events with `agent="supplier"`, the endpoint path, operation name, HTTP status, latency, and relevant supplier fields.
+
+
+## Supervisor multi-agent orchestration examples
+
+The Supervisor can now route requests to `inventory`, `supplier`, or `both`.
+
+### Inventory-only question
+
+```bash
+curl -X POST http://localhost:8000/copilot ^
+  -H "Content-Type: application/json" ^
+  -d "{\"question\":\"Qual é a política de estoque do PARAFUSO-M20?\"}"
+```
+
+Expected behavior: the Supervisor selects the Inventory Agent.
+
+### Supplier-only question
+
+```bash
+curl -X POST http://localhost:8000/copilot ^
+  -H "Content-Type: application/json" ^
+  -d "{\"question\":\"Qual é o rating da XYZ Metais?\"}"
+```
+
+Expected behavior: the Supervisor selects the Supplier Agent.
+
+### Hybrid question
+
+```bash
+curl -X POST http://localhost:8000/copilot ^
+  -H "Content-Type: application/json" ^
+  -d "{\"question\":\"Quem fornece o PARAFUSO-M20 e qual é a política de estoque desse produto?\"}"
+```
+
+Expected behavior: the Supervisor selects `both`, calls Inventory and Supplier, then synthesizes one answer.
+
+Relevant observability events:
+
+- `supervisor.route.selected`
+- `supervisor.agent_call.inventory.start`
+- `supervisor.agent_call.inventory.success`
+- `supervisor.agent_call.supplier.start`
+- `supervisor.agent_call.supplier.success`
+- `supervisor.multi_agent.start`
+- `supervisor.multi_agent.response`
