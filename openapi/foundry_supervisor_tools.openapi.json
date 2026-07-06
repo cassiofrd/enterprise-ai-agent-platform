@@ -2,8 +2,8 @@
   "openapi": "3.0.3",
   "info": {
     "title": "Supervisor Multi-Agent Supply Chain API",
-    "version": "0.2.0",
-    "description": "Foundry-compatible OpenAPI schema for the Supervisor Agent. It exposes a single copilot endpoint that orchestrates Inventory and Supplier specialists."
+    "version": "0.3.0",
+    "description": "Foundry-compatible OpenAPI schema for the Supervisor Agent. It exposes copilot orchestration plus document-grounded RAG over Azure AI Search."
   },
   "servers": [
     {
@@ -15,7 +15,7 @@
       "post": {
         "operationId": "askSupplyChainSupervisor",
         "summary": "Ask Supply Chain Supervisor",
-        "description": "Send a supply chain question to the Supervisor Agent. The Supervisor routes to Inventory, Supplier, or both, then returns a consolidated answer.",
+        "description": "Send a supply chain question to the Supervisor Agent. The Supervisor routes to Inventory, Supplier, both, or document-grounded knowledge search, then returns a consolidated answer.",
         "requestBody": {
           "required": true,
           "content": {
@@ -61,6 +61,64 @@
           }
         }
       }
+    },
+    "/knowledge/search": {
+      "post": {
+        "operationId": "searchSupervisorKnowledge",
+        "summary": "Search Supervisor Knowledge",
+        "description": "Search document chunks in Azure AI Search for policy, contract, procedure or guidance questions.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/knowledge/answer": {
+      "post": {
+        "operationId": "answerSupervisorKnowledge",
+        "summary": "Answer Supervisor Knowledge Question",
+        "description": "Retrieve document chunks from Azure AI Search and generate a final grounded answer in Portuguese for policy, procedure, contract or guidance questions.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeAnswerRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeAnswerResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -95,6 +153,100 @@
           "validation_reason": {
             "type": "string",
             "nullable": true
+          }
+        }
+      },
+      "KnowledgeSearchRequest": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "Question to search against document chunks indexed in Azure AI Search."
+          },
+          "agent": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional agent filter. Use inventory, supplier or supervisor when supported."
+          },
+          "top": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      },
+      "KnowledgeSearchResponse": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "result_count": {
+            "type": "integer"
+          },
+          "context": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
+        }
+      },
+      "KnowledgeAnswerRequest": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "Document-grounded question to answer using Azure AI Search."
+          },
+          "agent": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional agent filter. Use inventory, supplier or supervisor when supported."
+          },
+          "top": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      },
+      "KnowledgeAnswerResponse": {
+        "type": "object",
+        "properties": {
+          "answer": {
+            "type": "string",
+            "description": "Final grounded answer generated from retrieved document chunks."
+          },
+          "trace_id": {
+            "type": "string"
+          },
+          "result_count": {
+            "type": "integer"
+          },
+          "context": {
+            "type": "string",
+            "description": "Formatted context used for grounding and debugging."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
           }
         }
       }

@@ -41,7 +41,9 @@
             "in": "path",
             "required": true,
             "description": "Supplier name, for example XYZ Metais.",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -69,7 +71,9 @@
             "in": "path",
             "required": true,
             "description": "Supplier name, for example XYZ Metais.",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -97,7 +101,9 @@
             "in": "path",
             "required": true,
             "description": "Supplier name, for example XYZ Metais.",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -125,7 +131,9 @@
             "in": "path",
             "required": true,
             "description": "Supplier name, for example XYZ Metais.",
-            "schema": { "type": "string" }
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -141,6 +149,35 @@
           }
         }
       }
+    },
+    "/knowledge/search": {
+      "post": {
+        "operationId": "searchSupplierKnowledge",
+        "summary": "Search Supplier Knowledge",
+        "description": "Search document chunks in Azure AI Search for policy, contract, procedure or guidance questions.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -148,90 +185,219 @@
       "SupplierListResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
+          "agent": {
+            "type": "string"
+          },
           "suppliers": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/SupplierSummary" }
+            "items": {
+              "$ref": "#/components/schemas/SupplierSummary"
+            }
           }
         }
       },
       "SupplierResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
-          "supplier": { "$ref": "#/components/schemas/SupplierSummary" }
+          "agent": {
+            "type": "string"
+          },
+          "supplier": {
+            "$ref": "#/components/schemas/SupplierSummary"
+          }
         }
       },
       "SupplierProductsResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
-          "supplier_name": { "type": "string" },
+          "agent": {
+            "type": "string"
+          },
+          "supplier_name": {
+            "type": "string"
+          },
           "products": {
             "type": "array",
-            "items": { "type": "string" }
+            "items": {
+              "type": "string"
+            }
           },
-          "source": { "type": "string" }
+          "source": {
+            "type": "string"
+          }
         }
       },
       "SupplierContractsResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
-          "supplier_name": { "type": "string" },
+          "agent": {
+            "type": "string"
+          },
+          "supplier_name": {
+            "type": "string"
+          },
           "contracts": {
             "type": "array",
-            "items": { "$ref": "#/components/schemas/SupplierContract" }
+            "items": {
+              "$ref": "#/components/schemas/SupplierContract"
+            }
           },
-          "source": { "type": "string" }
+          "source": {
+            "type": "string"
+          }
         }
       },
       "SupplierPerformanceResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
-          "supplier_name": { "type": "string" },
-          "performance": { "$ref": "#/components/schemas/SupplierPerformance" },
-          "source": { "type": "string" }
+          "agent": {
+            "type": "string"
+          },
+          "supplier_name": {
+            "type": "string"
+          },
+          "performance": {
+            "$ref": "#/components/schemas/SupplierPerformance"
+          },
+          "source": {
+            "type": "string"
+          }
         }
       },
       "SupplierSummary": {
         "type": "object",
         "properties": {
-          "supplier_name": { "type": "string" },
-          "supplier_id": { "type": "string" },
-          "legal_name": { "type": "string" },
-          "city": { "type": "string" },
-          "state": { "type": "string" },
-          "country": { "type": "string" },
-          "rating": { "type": "string" },
-          "risk_level": { "type": "string" },
-          "payment_terms": { "type": "string" },
-          "buyer": { "type": "string" },
-          "average_lead_time_days": { "type": "integer" },
-          "products": { "type": "array", "items": { "type": "string" } },
-          "source": { "type": "string" }
+          "supplier_name": {
+            "type": "string"
+          },
+          "supplier_id": {
+            "type": "string"
+          },
+          "legal_name": {
+            "type": "string"
+          },
+          "city": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "country": {
+            "type": "string"
+          },
+          "rating": {
+            "type": "string"
+          },
+          "risk_level": {
+            "type": "string"
+          },
+          "payment_terms": {
+            "type": "string"
+          },
+          "buyer": {
+            "type": "string"
+          },
+          "average_lead_time_days": {
+            "type": "integer"
+          },
+          "products": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "source": {
+            "type": "string"
+          }
         }
       },
       "SupplierContract": {
         "type": "object",
         "properties": {
-          "contract_id": { "type": "string" },
-          "status": { "type": "string" },
-          "start_date": { "type": "string" },
-          "end_date": { "type": "string" },
-          "category": { "type": "string" },
-          "manager_approval_required_above_brl": { "type": "number" }
+          "contract_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "start_date": {
+            "type": "string"
+          },
+          "end_date": {
+            "type": "string"
+          },
+          "category": {
+            "type": "string"
+          },
+          "manager_approval_required_above_brl": {
+            "type": "number"
+          }
         }
       },
       "SupplierPerformance": {
         "type": "object",
         "properties": {
-          "rating": { "type": "string" },
-          "risk_level": { "type": "string" },
-          "sla_on_time_delivery_percent": { "type": "number" },
-          "quality_score": { "type": "number" },
-          "average_lead_time_days": { "type": "integer" }
+          "rating": {
+            "type": "string"
+          },
+          "risk_level": {
+            "type": "string"
+          },
+          "sla_on_time_delivery_percent": {
+            "type": "number"
+          },
+          "quality_score": {
+            "type": "number"
+          },
+          "average_lead_time_days": {
+            "type": "integer"
+          }
+        }
+      },
+      "KnowledgeSearchRequest": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "Question to search against document chunks indexed in Azure AI Search."
+          },
+          "agent": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional agent filter. Use inventory, supplier or supervisor when supported."
+          },
+          "top": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      },
+      "KnowledgeSearchResponse": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "result_count": {
+            "type": "integer"
+          },
+          "context": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
         }
       }
     }

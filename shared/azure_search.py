@@ -105,6 +105,69 @@ def search_supply_chain_docs(
     return payload.get("value", [])
 
 
+
+def search_knowledge_chunks(
+    query: str,
+    agent: str | None = None,
+    top: int = 5,
+) -> list[dict[str, Any]]:
+    """Search document chunks indexed in Azure AI Search.
+
+    This is the document-RAG layer. Structured lookups continue to use
+    entity_type/entity_id filters; open-ended policy, contract, procedure, and
+    guidance questions should use this function.
+    """
+    filter_expression = "doc_type eq 'document_chunk'"
+    return search_supply_chain_docs(
+        query=query,
+        agent=agent,
+        top=top,
+        filter_expression=filter_expression,
+    )
+
+
+def format_knowledge_context(results: list[dict[str, Any]]) -> str:
+    """Format search results as a grounded context block for an LLM."""
+    if not results:
+        return "No relevant document chunks were found in Azure AI Search."
+
+    blocks: list[str] = []
+    for index, item in enumerate(results, start=1):
+        title = item.get("title", "Untitled")
+        source = item.get("source", "unknown")
+        agent = item.get("agent", "unknown")
+        doc_type = item.get("doc_type", "unknown")
+        score = item.get("@search.score")
+        content = item.get("content", "")
+        blocks.append(
+            f"[Chunk {index}] title={title} source={source} agent={agent} "
+            f"doc_type={doc_type} score={score}\n{content}"
+        )
+
+    return "Grounding document chunks from Azure AI Search:\n\n" + "\n\n---\n\n".join(blocks)
+
+
+def answer_from_knowledge(
+    *,
+    question: str,
+    agent: str | None = None,
+    top: int = 5,
+) -> dict[str, Any]:
+    """Return document-RAG context and raw hits for a question.
+
+    The API layer can pass the formatted context to the LLM or return it directly
+    to callers such as Azure AI Foundry tools.
+    """
+    results = search_knowledge_chunks(query=question, agent=agent, top=top)
+    return {
+        "question": question,
+        "agent_filter": agent,
+        "result_count": len(results),
+        "context": format_knowledge_context(results),
+        "results": results,
+    }
+
+
 def lookup_structured_entity(
     *,
     entity_type: str,

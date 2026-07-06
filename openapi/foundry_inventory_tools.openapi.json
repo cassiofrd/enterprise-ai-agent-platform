@@ -119,6 +119,35 @@
           }
         }
       }
+    },
+    "/knowledge/search": {
+      "post": {
+        "operationId": "searchInventoryKnowledge",
+        "summary": "Search Inventory Knowledge",
+        "description": "Search document chunks in Azure AI Search for policy, contract, procedure or guidance questions.",
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/KnowledgeSearchRequest"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Successful response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/KnowledgeSearchResponse"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -126,15 +155,27 @@
       "ProductResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
+          "agent": {
+            "type": "string"
+          },
           "product": {
             "type": "object",
             "properties": {
-              "code": { "type": "string" },
-              "product_name": { "type": "string" },
-              "abc_class": { "type": "string" },
-              "preferred_supplier": { "type": "string" },
-              "lead_time_days": { "type": "integer" },
+              "code": {
+                "type": "string"
+              },
+              "product_name": {
+                "type": "string"
+              },
+              "abc_class": {
+                "type": "string"
+              },
+              "preferred_supplier": {
+                "type": "string"
+              },
+              "lead_time_days": {
+                "type": "integer"
+              },
               "inventory_policy": {
                 "$ref": "#/components/schemas/InventoryPolicy"
               }
@@ -145,9 +186,15 @@
       "InventoryPolicyResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
-          "product_code": { "type": "string" },
-          "abc_class": { "type": "string" },
+          "agent": {
+            "type": "string"
+          },
+          "product_code": {
+            "type": "string"
+          },
+          "abc_class": {
+            "type": "string"
+          },
           "inventory_policy": {
             "$ref": "#/components/schemas/InventoryPolicy"
           }
@@ -156,18 +203,32 @@
       "SupplierProductsResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
-          "supplier_name": { "type": "string" },
+          "agent": {
+            "type": "string"
+          },
+          "supplier_name": {
+            "type": "string"
+          },
           "products": {
             "type": "array",
             "items": {
               "type": "object",
               "properties": {
-                "code": { "type": "string" },
-                "product_name": { "type": "string" },
-                "abc_class": { "type": "string" },
-                "preferred_supplier": { "type": "string" },
-                "lead_time_days": { "type": "integer" }
+                "code": {
+                  "type": "string"
+                },
+                "product_name": {
+                  "type": "string"
+                },
+                "abc_class": {
+                  "type": "string"
+                },
+                "preferred_supplier": {
+                  "type": "string"
+                },
+                "lead_time_days": {
+                  "type": "integer"
+                }
               }
             }
           }
@@ -176,13 +237,21 @@
       "PurchasingPolicyResponse": {
         "type": "object",
         "properties": {
-          "agent": { "type": "string" },
+          "agent": {
+            "type": "string"
+          },
           "purchasing_policy": {
             "type": "object",
             "properties": {
-              "manager_approval_threshold_brl": { "type": "number" },
-              "urgent_orders_allowed_without_additional_quote": { "type": "boolean" },
-              "urgent_order_condition": { "type": "string" }
+              "manager_approval_threshold_brl": {
+                "type": "number"
+              },
+              "urgent_orders_allowed_without_additional_quote": {
+                "type": "boolean"
+              },
+              "urgent_order_condition": {
+                "type": "string"
+              }
             }
           }
         }
@@ -190,10 +259,64 @@
       "InventoryPolicy": {
         "type": "object",
         "properties": {
-          "safety_stock_units": { "type": "integer" },
-          "replenishment_frequency": { "type": "string" },
-          "review_frequency": { "type": "string" },
-          "critical_level_units": { "type": "integer" }
+          "safety_stock_units": {
+            "type": "integer"
+          },
+          "replenishment_frequency": {
+            "type": "string"
+          },
+          "review_frequency": {
+            "type": "string"
+          },
+          "critical_level_units": {
+            "type": "integer"
+          }
+        }
+      },
+      "KnowledgeSearchRequest": {
+        "type": "object",
+        "required": [
+          "question"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "description": "Question to search against document chunks indexed in Azure AI Search."
+          },
+          "agent": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional agent filter. Use inventory, supplier or supervisor when supported."
+          },
+          "top": {
+            "type": "integer",
+            "default": 5,
+            "minimum": 1,
+            "maximum": 10
+          }
+        }
+      },
+      "KnowledgeSearchResponse": {
+        "type": "object",
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "question": {
+            "type": "string"
+          },
+          "result_count": {
+            "type": "integer"
+          },
+          "context": {
+            "type": "string"
+          },
+          "results": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            }
+          }
         }
       }
     }

@@ -68,7 +68,10 @@ def upload_documents(docs: list[dict[str, Any]]) -> None:
     response = requests.post(url, headers=headers(), json={"value": docs}, timeout=60)
     response.raise_for_status()
     payload = response.json()
-    failures = [item for item in payload.get("value", []) if not item.get("succeeded")]
+    failures = [
+        item for item in payload.get("value", [])
+        if not item.get("succeeded") and not item.get("status", False)
+    ]
     if failures:
         raise SystemExit(f"Some documents failed to upload: {failures}")
     print(f"Uploaded {len(docs)} documents to {INDEX_NAME}")

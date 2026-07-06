@@ -16,6 +16,7 @@ from langgraph.graph import END, StateGraph
 
 from shared.config import INVENTORY_AGENT_URL, SUPPLIER_AGENT_URL, ACTIVE_CHAT_MODEL
 from shared.llm import get_chat_llm
+from shared.azure_search import answer_from_knowledge, azure_search_status
 from shared.observability import (
     log_event,
     new_trace_id,
@@ -54,6 +55,26 @@ class CopilotResponse(BaseModel):
     validation_reason: Optional[str] = None
 
 
+class KnowledgeSearchRequest(BaseModel):
+    question: str
+    agent: Optional[str] = None
+    top: int = 5
+
+
+class KnowledgeAnswerRequest(BaseModel):
+    question: str
+    agent: Optional[str] = None
+    top: int = 5
+
+
+class KnowledgeAnswerResponse(BaseModel):
+    answer: str
+    trace_id: str
+    result_count: int
+    context: str
+    sources: list[dict]
+
+
 class AgentState(TypedDict):
     operation: Optional[dict]
     messages: Annotated[Sequence[BaseMessage], operator.add]
@@ -73,15 +94,17 @@ def supervisor_node(state: AgentState):
     supervisor_prompt = (
         "You are a supervisor coordinating a team of supply chain specialists.\n"
         "Currently available team members:\n"
-        "- inventory: Handles inventory levels, reorder policy, stock, warehouse optimization, backorders, inventory policies, SKU-specific reorder policies, and inventory long-term memory.\n"
-        "- supplier: Handles supplier risk, supplier comparison, supplier alternatives, lead time, SLA, vendor reliability, procurement recommendations, and supplier-specific memory.\n\n"
+        "- inventory: Handles inventory levels, stock, product codes, reorder policy, SKU-specific thresholds and inventory long-term memory.\n"
+        "- supplier: Handles supplier risk, supplier comparison, supplier alternatives, lead time, SLA, contracts, buyer, payment terms, vendor reliability and supplier-specific memory.\n"
+        "- knowledge: Handles policy, procedure, contract, guidance and document-based questions by retrieving document chunks from Azure AI Search and generating a grounded answer.\n\n"
         "Routing rules:\n"
-        "- Route questions about stock levels, reorder policy, backorders, inventory thresholds, warehouse policy, or SKU inventory operations to inventory.\n"
-        "- Route questions about supplier risk, vendor evaluation, supplier comparison, alternate suppliers, supplier SLA, lead time, contracts, buyer, payment terms, or procurement supplier recommendations to supplier.\n"
+        "- Route questions about concrete stock/product values, product master data, reorder policy or SKU operations to inventory.\n"
+        "- Route questions about concrete supplier profile, risk, supplier comparison, alternate suppliers, SLA, lead time, contracts, buyer, payment terms or vendor recommendations to supplier.\n"
         "- Route hybrid questions that require both product/inventory data and supplier/vendor data to both.\n"
+        "- Route open-ended questions asking what a policy, procedure, contract, document or internal guidance says to knowledge.\n"
         "- If the user asks to remember a preferred supplier for a SKU, route to inventory for now, because preferred supplier memory is currently stored in the inventory memory layer.\n\n"
         "Based on the user query, select the best route.\n"
-        "Output ONLY one of these names: inventory, supplier, or both. Do not output anything else.\n\n"
+        "Output ONLY one of these names: inventory, supplier, both, or knowledge. Do not output anything else.\n\n"
         f"OPERATION: {operation_json}"
     )
 
@@ -572,6 +595,102 @@ def multi_agent_node(state: AgentState):
     }
 
 
+
+def build_grounded_knowledge_answer(
+    *,
+    question: str,
+    trace_id: str,
+    agent: str | None = None,
+    top: int = 5,
+) -> dict:
+    """Retrieve document chunks and generate a grounded answer in Portuguese."""
+    start = time.perf_counter()
+    rag_result = answer_from_knowledge(question=question, agent=agent, top=top)
+    context = rag_result["context"]
+    results = rag_result["results"]
+
+    sources = [
+        {
+            "title": item.get("title"),
+            "source": item.get("source"),
+            "agent": item.get("agent"),
+            "score": item.get("@search.score"),
+        }
+        for item in results
+    ]
+
+    if not results:
+        answer = (
+            "Não encontrei trechos relevantes na base documental do Azure AI Search "
+            "para responder a essa pergunta com segurança."
+        )
+    else:
+        generation_prompt = (
+            "Você é um supervisor de supply chain respondendo com base em documentos corporativos.\n"
+            "Responda em português do Brasil.\n"
+            "Use somente as informações do CONTEXTO recuperado do Azure AI Search.\n"
+            "Não invente dados, números, fornecedores, contratos ou políticas.\n"
+            "Se a resposta estiver parcialmente disponível, deixe claro o que foi encontrado e o que não foi encontrado.\n"
+            "No final, inclua uma seção curta chamada 'Fontes consultadas' com os títulos dos chunks usados.\n\n"
+            f"PERGUNTA DO USUÁRIO:\n{question}\n\n"
+            f"CONTEXTO:\n{context}\n"
+        )
+
+        with observe_duration(
+            "llm.supervisor.knowledge_answer",
+            trace_id=trace_id,
+            agent="supervisor",
+        ):
+            response = llm.invoke([SystemMessage(content=generation_prompt)])
+
+        log_llm_usage(
+            "llm.supervisor.knowledge_answer.usage",
+            response=response,
+            trace_id=trace_id,
+            agent="supervisor",
+            model=ACTIVE_CHAT_MODEL,
+        )
+        answer = response.content
+
+    log_event(
+        "supervisor.knowledge.answer",
+        trace_id=trace_id,
+        result_count=rag_result["result_count"],
+        agent_filter=agent,
+        latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        question_preview=question[:300],
+        answer_preview=answer[:500],
+    )
+
+    return {
+        "answer": answer,
+        "trace_id": trace_id,
+        "result_count": rag_result["result_count"],
+        "context": context,
+        "sources": sources,
+        "results": results,
+    }
+
+
+def knowledge_node(state: AgentState):
+    """Answer document-grounded policy/procedure/contract questions using Azure AI Search + LLM."""
+    trace_id = state.get("trace_id") or new_trace_id()
+    user_messages = [m.content for m in state["messages"] if m.type == "human"]
+    user_question = user_messages[-1] if user_messages else ""
+
+    result = build_grounded_knowledge_answer(
+        question=user_question,
+        trace_id=trace_id,
+        agent=None,
+        top=5,
+    )
+
+    return {
+        "messages": [AIMessage(content=result["answer"])],
+        "trace_id": trace_id,
+        "selected_route": "knowledge",
+    }
+
 def validator_node(state: AgentState):
     trace_id = state.get("trace_id") or new_trace_id()
     user_messages = [m.content for m in state["messages"] if m.type == "human"]
@@ -674,7 +793,7 @@ def improve_response_node(state: AgentState):
     return {"messages": [AIMessage(content=response.content)], "trace_id": trace_id}
 
 
-def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier", "both"]:
+def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier", "both", "knowledge"]:
     agent_name = state["messages"][-1].content.strip().lower()
     trace_id = state.get("trace_id") or new_trace_id()
 
@@ -686,6 +805,9 @@ def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier", "
 
     if agent_name == "both":
         return "both"
+
+    if agent_name == "knowledge":
+        return "knowledge"
 
     log_event(
         "agent.supervisor.route_fallback",
@@ -701,11 +823,11 @@ def route_to_specialist(state: AgentState) -> Literal["inventory", "supplier", "
 def route_after_validation(state: AgentState) -> Literal["end", "improve"]:
     latest_answer = state["messages"][-1].content.lower()
 
-    if state.get("selected_route") == "both":
+    if state.get("selected_route") in {"both", "knowledge"}:
         log_event(
             "agent.validator.bypass",
             trace_id=state.get("trace_id") or new_trace_id(),
-            reason="Hybrid structured REST response should not be rewritten by improve_response.",
+            reason="Structured hybrid or document-grounded RAG response should not be rewritten by improve_response.",
         )
         return "end"
 
@@ -730,6 +852,7 @@ def construct_graph():
     g.add_node("inventory", inventory_node)
     g.add_node("supplier", supplier_node)
     g.add_node("both", multi_agent_node)
+    g.add_node("knowledge", knowledge_node)
     g.add_node("validator", validator_node)
     g.add_node("improve_response", improve_response_node)
 
@@ -738,11 +861,12 @@ def construct_graph():
     g.add_conditional_edges(
         "supervisor",
         route_to_specialist,
-        {"inventory": "inventory", "supplier": "supplier", "both": "both"},
+        {"inventory": "inventory", "supplier": "supplier", "both": "both", "knowledge": "knowledge"},
     )
     g.add_edge("inventory", "validator")
     g.add_edge("supplier", "validator")
     g.add_edge("both", "validator")
+    g.add_edge("knowledge", "validator")
     g.add_conditional_edges(
         "validator",
         route_after_validation,
@@ -754,6 +878,49 @@ def construct_graph():
 
 
 graph = construct_graph()
+
+
+@app.post("/knowledge/search")
+def knowledge_search(request: KnowledgeSearchRequest):
+    """Search document chunks across Azure AI Search for supervisor-level RAG."""
+    trace_id = new_trace_id()
+    start = time.perf_counter()
+    result = answer_from_knowledge(
+        question=request.question,
+        agent=request.agent,
+        top=request.top,
+    )
+    log_event(
+        "api.knowledge.search",
+        agent="supervisor",
+        endpoint="/knowledge/search",
+        trace_id=trace_id,
+        status="success",
+        agent_filter=request.agent,
+        result_count=result["result_count"],
+        latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        question_preview=request.question[:300],
+    )
+    return {"agent": "supervisor", "trace_id": trace_id, "azure_search": azure_search_status(), **result}
+
+
+@app.post("/knowledge/answer", response_model=KnowledgeAnswerResponse)
+def knowledge_answer(request: KnowledgeAnswerRequest):
+    """Retrieve document chunks and generate a final grounded answer."""
+    trace_id = new_trace_id()
+    result = build_grounded_knowledge_answer(
+        question=request.question,
+        trace_id=trace_id,
+        agent=request.agent,
+        top=request.top,
+    )
+    return KnowledgeAnswerResponse(
+        answer=result["answer"],
+        trace_id=trace_id,
+        result_count=result["result_count"],
+        context=result["context"],
+        sources=result["sources"],
+    )
 
 
 @app.get("/metrics")
@@ -770,7 +937,7 @@ def health():
     return {
         "status": "ok",
         "agent": "supervisor",
-        "routes": ["inventory", "supplier", "both"],
+        "routes": ["inventory", "supplier", "both", "knowledge"],
     }
 
 

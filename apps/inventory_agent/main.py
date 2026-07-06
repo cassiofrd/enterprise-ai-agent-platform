@@ -6,6 +6,7 @@ import re
 import time
 
 from fastapi import FastAPI, Query, HTTPException
+from pydantic import BaseModel
 
 from mcp import ClientSession, StdioServerParameters
 from mcp.client.stdio import stdio_client
@@ -39,14 +40,23 @@ from shared.schemas import InventoryRequest
 from shared.azure_search import (
     azure_search_enabled,
     azure_search_status,
+    answer_from_knowledge,
+    format_knowledge_context,
     format_search_results,
     lookup_structured_entity,
+    search_knowledge_chunks,
     search_supply_chain_docs,
 )
 from shared.llm import get_chat_llm, get_embeddings
 
 
 app = FastAPI(title="Inventory Agent Server with MCP, Vector RAG and Observability")
+
+
+class KnowledgeSearchRequest(BaseModel):
+    question: str
+    top: int = 5
+
 
 _vector_store = None
 
@@ -751,7 +761,7 @@ def search_azure_ai_search(query: str) -> str:
         tool="search_azure_ai_search",
         query=query,
     ):
-        results = search_supply_chain_docs(query=query, agent=None, top=3)
+        results = search_knowledge_chunks(query=query, agent="inventory", top=5)
 
     log_event(
         "azure_search.results",
@@ -761,7 +771,7 @@ def search_azure_ai_search(query: str) -> str:
         result_count=len(results),
     )
 
-    return format_search_results(results)
+    return format_knowledge_context(results)
 
 
 INVENTORY_TOOLS = [
@@ -1122,6 +1132,28 @@ def get_purchasing_policy():
 
     return payload
 
+
+
+
+@app.post("/knowledge/search")
+def knowledge_search(request: KnowledgeSearchRequest):
+    """Search document chunks for inventory-related policies and guidance."""
+    start = time.perf_counter()
+    result = answer_from_knowledge(
+        question=request.question,
+        agent="inventory",
+        top=request.top,
+    )
+    log_event(
+        "api.knowledge.search",
+        agent="inventory",
+        endpoint="/knowledge/search",
+        status="success",
+        result_count=result["result_count"],
+        latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        question_preview=request.question[:300],
+    )
+    return {"agent": "inventory", **result}
 
 @app.get("/data-source-status")
 def data_source_status():

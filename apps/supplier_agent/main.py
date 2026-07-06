@@ -6,6 +6,7 @@ import re
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from pydantic import BaseModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.tool import ToolMessage
 from langchain_core.tools import tool
@@ -24,14 +25,22 @@ from shared.schemas import SupplierRequest
 from shared.azure_search import (
     azure_search_enabled,
     azure_search_status,
+    answer_from_knowledge,
+    format_knowledge_context,
     format_search_results,
     lookup_structured_entity,
+    search_knowledge_chunks,
     search_supply_chain_docs,
 )
 from shared.llm import get_chat_llm
 
 
 app = FastAPI(title="Supplier Agent API")
+
+
+class KnowledgeSearchRequest(BaseModel):
+    question: str
+    top: int = 5
 
 
 SUPPLIER_REFERENCE_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "supplier_reference_data.json"
@@ -364,7 +373,7 @@ def search_azure_ai_search(query: str) -> str:
         tool="search_azure_ai_search",
         query=query,
     ):
-        results = search_supply_chain_docs(query=query, agent=None, top=3)
+        results = search_knowledge_chunks(query=query, agent="supplier", top=5)
 
     log_event(
         "azure_search.results",
@@ -374,7 +383,7 @@ def search_azure_ai_search(query: str) -> str:
         result_count=len(results),
     )
 
-    return format_search_results(results)
+    return format_knowledge_context(results)
 
 
 SUPPLIER_TOOLS = [
@@ -711,6 +720,28 @@ def get_supplier_performance(supplier_name: str):
         "source": "structured_supplier_reference_data",
     }
 
+
+
+
+@app.post("/knowledge/search")
+def knowledge_search(request: KnowledgeSearchRequest):
+    """Search document chunks for supplier contracts, performance and procurement guidance."""
+    start = time.perf_counter()
+    result = answer_from_knowledge(
+        question=request.question,
+        agent="supplier",
+        top=request.top,
+    )
+    log_event(
+        "api.knowledge.search",
+        agent="supplier",
+        endpoint="/knowledge/search",
+        status="success",
+        result_count=result["result_count"],
+        latency_ms=round((time.perf_counter() - start) * 1000, 2),
+        question_preview=request.question[:300],
+    )
+    return {"agent": "supplier", **result}
 
 @app.get("/data-source-status")
 def data_source_status():
