@@ -463,3 +463,15 @@ curl.exe http://localhost:8002/data-source-status
 ```
 
 See `docs/AZURE_AI_SEARCH.md` for details.
+
+## Observability Trace Explorer
+
+The project now includes a lightweight trace explorer for the multi-agent flow. Each agent exposes:
+
+```text
+GET /metrics
+GET /traces
+GET /traces/{trace_id}
+```
+
+The Streamlit Observability page can show a trace timeline with routing decisions, specialist calls, latency by step, token/cost metadata and raw events. See `docs/OBSERVABILITY.md` for details.

@@ -16,6 +16,9 @@ from shared.memory import delete_memory, list_memories, save_memory, search_memo
 from shared.observability import (
     get_metrics_summary,
     get_recent_events,
+    get_trace_events,
+    get_trace_index,
+    get_trace_summary,
     log_event,
     log_llm_usage,
     new_trace_id,
@@ -759,6 +762,7 @@ def metrics():
         "agent": "supplier",
         "summary": get_metrics_summary(),
         "events": get_recent_events(limit=200),
+        "traces": get_trace_index(limit=50),
     }
 
 
@@ -846,4 +850,19 @@ def health():
             "supplier_contract_lookup",
             "supplier_performance_lookup",
         ],
+    }
+
+
+@app.get("/traces")
+def traces(limit: int = 50):
+    return {
+        "traces": get_trace_index(limit=limit),
+    }
+
+
+@app.get("/traces/{trace_id}")
+def trace_detail(trace_id: str, limit: int = 500):
+    return {
+        "summary": get_trace_summary(trace_id),
+        "events": get_trace_events(trace_id, limit=limit),
     }

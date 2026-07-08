@@ -258,6 +258,100 @@ col7.metric("Cache savings", cache_savings)
 col8.metric("Most expensive agent", most_expensive_agent)
 col9.metric("Slowest agent", slowest_agent)
 
+st.subheader("Trace Explorer")
+if not filtered_events_df.empty and "trace_id" in filtered_events_df.columns:
+    trace_rows = []
+    for trace_id, trace_group in filtered_events_df.dropna(subset=["trace_id"]).groupby("trace_id"):
+        trace_group = trace_group.copy()
+        if "ts" in trace_group.columns:
+            trace_group = trace_group.sort_values("ts")
+        elif "timestamp" in trace_group.columns:
+            trace_group = trace_group.sort_values("timestamp")
+
+        latency_ms = 0.0
+        if "latency_ms" in trace_group.columns:
+            latency_ms = float(pd.to_numeric(trace_group["latency_ms"], errors="coerce").fillna(0).sum())
+
+        tokens = 0
+        if "total_tokens" in trace_group.columns:
+            tokens = int(pd.to_numeric(trace_group["total_tokens"], errors="coerce").fillna(0).sum())
+
+        cost = 0.0
+        if "estimated_total_cost_usd" in trace_group.columns:
+            cost = float(pd.to_numeric(trace_group["estimated_total_cost_usd"], errors="coerce").fillna(0).sum())
+
+        routes = []
+        for route_col in ["route", "selected_route"]:
+            if route_col in trace_group.columns:
+                routes.extend([str(x) for x in trace_group[route_col].dropna().tolist()])
+
+        trace_rows.append(
+            {
+                "trace_id": trace_id,
+                "first_timestamp": trace_group.iloc[0].get("timestamp"),
+                "last_timestamp": trace_group.iloc[-1].get("timestamp"),
+                "event_count": len(trace_group),
+                "observed_latency_ms": round(latency_ms, 2),
+                "tokens": tokens,
+                "estimated_cost_usd": round(cost, 8),
+                "last_route": routes[-1] if routes else None,
+            }
+        )
+
+    if trace_rows:
+        trace_index_df = pd.DataFrame(trace_rows).sort_values("last_timestamp", ascending=False)
+        st.dataframe(trace_index_df, use_container_width=True, height=260)
+
+        selected_trace = st.selectbox(
+            "Select a trace to inspect",
+            trace_index_df["trace_id"].astype(str).tolist(),
+        )
+        trace_df = filtered_events_df[filtered_events_df["trace_id"].astype(str) == selected_trace].copy()
+        if "ts" in trace_df.columns:
+            trace_df = trace_df.sort_values("ts")
+        elif "timestamp" in trace_df.columns:
+            trace_df = trace_df.sort_values("timestamp")
+
+        trace_summary = trace_index_df[trace_index_df["trace_id"].astype(str) == selected_trace].iloc[0].to_dict()
+        s1, s2, s3, s4 = st.columns(4)
+        s1.metric("Trace events", int(trace_summary.get("event_count") or 0))
+        s2.metric("Observed latency", f"{float(trace_summary.get('observed_latency_ms') or 0):.0f} ms")
+        s3.metric("Tokens", int(trace_summary.get("tokens") or 0))
+        s4.metric("Cost", f"${float(trace_summary.get('estimated_cost_usd') or 0):.6f}")
+
+        timeline_cols = [
+            "timestamp",
+            "source_agent",
+            "event_type",
+            "agent",
+            "target_agent",
+            "target",
+            "route",
+            "selected_route",
+            "status",
+            "latency_ms",
+            "tool_operation",
+            "http_status_code",
+        ]
+        visible_timeline_cols = [col for col in timeline_cols if col in trace_df.columns]
+        st.markdown("**Trace timeline**")
+        st.dataframe(trace_df[visible_timeline_cols], use_container_width=True, height=320)
+
+        latency_cols = ["event_type", "agent", "target_agent", "target", "latency_ms", "status"]
+        visible_latency_cols = [col for col in latency_cols if col in trace_df.columns]
+        if "latency_ms" in trace_df.columns:
+            latency_trace_df = trace_df[pd.to_numeric(trace_df["latency_ms"], errors="coerce").notna()].copy()
+            if not latency_trace_df.empty:
+                st.markdown("**Latency by step**")
+                st.bar_chart(latency_trace_df[visible_latency_cols], x="event_type", y="latency_ms")
+
+        with st.expander("Raw trace events"):
+            st.json(trace_df.to_dict(orient="records"))
+    else:
+        st.info("No trace IDs found in the selected events.")
+else:
+    st.info("No trace data available yet. Send a question and refresh this page.")
+
 
 st.subheader("Agent summaries")
 st.dataframe(filtered_summary_df, use_container_width=True)

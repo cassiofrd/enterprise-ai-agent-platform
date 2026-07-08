@@ -31,6 +31,9 @@ from shared.config import (
 from shared.observability import (
     get_metrics_summary,
     get_recent_events,
+    get_trace_events,
+    get_trace_index,
+    get_trace_summary,
     log_event,
     log_llm_usage,
     new_trace_id,
@@ -1215,6 +1218,7 @@ def metrics():
         "agent": "inventory",
         "summary": get_metrics_summary(),
         "events": get_recent_events(limit=200),
+        "traces": get_trace_index(limit=50),
     }
 
 
@@ -1232,4 +1236,18 @@ def health():
         "observability": "jsonl",
         "cache_backend": cache_backend(),
         "index_path": str(VECTOR_INDEX_PATH),
+    }
+
+@app.get("/traces")
+def traces(limit: int = 50):
+    return {
+        "traces": get_trace_index(limit=limit),
+    }
+
+
+@app.get("/traces/{trace_id}")
+def trace_detail(trace_id: str, limit: int = 500):
+    return {
+        "summary": get_trace_summary(trace_id),
+        "events": get_trace_events(trace_id, limit=limit),
     }
