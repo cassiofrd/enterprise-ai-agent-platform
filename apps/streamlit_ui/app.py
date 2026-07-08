@@ -171,10 +171,14 @@ def ask_foundry_agent(question: str, project_endpoint: str, agent_id: str) -> di
     }
 
 
-def ask_supervisor(question: str, api_url: str) -> dict[str, Any]:
+def ask_supervisor(question: str, api_url: str, session_id: str | None = None) -> dict[str, Any]:
+    payload = {"question": question}
+    if session_id:
+        payload["session_id"] = session_id
+
     response = requests.post(
         api_url,
-        json={"question": question},
+        json=payload,
         timeout=180,
     )
     response.raise_for_status()
@@ -184,6 +188,9 @@ def ask_supervisor(question: str, api_url: str) -> dict[str, Any]:
         "trace_id": data.get("trace_id"),
         "validation_passed": data.get("validation_passed"),
         "validation_reason": data.get("validation_reason"),
+        "session_id": data.get("session_id"),
+        "selected_route": data.get("selected_route"),
+        "sources": data.get("sources") or [],
         "raw": data,
     }
 
@@ -195,6 +202,14 @@ def _current_flow(runtime: str, agent_key: str | None = None) -> str:
             "Streamlit → Azure AI Foundry → OpenAPI Tool → Container Apps",
         )
     return "Streamlit → Supervisor Container Apps → Inventory + Supplier"
+
+
+if "messages" not in st.session_state:
+    st.session_state.messages = []
+if "execution_history" not in st.session_state:
+    st.session_state.execution_history = []
+if "session_id" not in st.session_state:
+    st.session_state.session_id = str(uuid.uuid4())
 
 
 with st.sidebar:
@@ -302,16 +317,14 @@ with st.sidebar:
 
     st.caption(f"Log local: {os.getenv('STREAMLIT_OBSERVABILITY_LOG', DEFAULT_OBSERVABILITY_LOG)}")
 
+    st.caption(f"Session ID: `{st.session_state.get('session_id', '-')}`")
+
     if st.button("Limpar conversa"):
         st.session_state.messages = []
         st.session_state.last_execution = None
         st.session_state.execution_history = []
+        st.session_state.session_id = str(uuid.uuid4())
         st.rerun()
-
-if "messages" not in st.session_state:
-    st.session_state.messages = []
-if "execution_history" not in st.session_state:
-    st.session_state.execution_history = []
 
 for msg in st.session_state.messages:
     with st.chat_message(msg["role"]):
@@ -381,7 +394,7 @@ if question:
                 )
 
                 with st.spinner("Chamando Supervisor em Azure Container Apps..."):
-                    result = ask_supervisor(question, supervisor_url)
+                    result = ask_supervisor(question, supervisor_url, st.session_state.session_id)
 
                 event.update(
                     {
@@ -389,10 +402,16 @@ if question:
                         "supervisor_url": supervisor_url,
                         "trace_id": result.get("trace_id"),
                         "validation_passed": result.get("validation_passed"),
+                        "session_id": result.get("session_id"),
+                        "selected_route": result.get("selected_route"),
+                        "source_count": len(result.get("sources") or []),
                     }
                 )
 
                 st.markdown(result["answer"])
+                if result.get("sources"):
+                    with st.expander("Fontes recuperadas"):
+                        st.json(result["sources"])
                 st.session_state.messages.append(
                     {"role": "assistant", "content": result["answer"]}
                 )

@@ -132,6 +132,11 @@
           "question": {
             "type": "string",
             "description": "User question about inventory, suppliers, contracts, performance or hybrid supply chain topics."
+          },
+          "session_id": {
+            "type": "string",
+            "nullable": true,
+            "description": "Optional conversation/session identifier for short-term memory and audit."
           }
         }
       },
@@ -153,6 +158,22 @@
           "validation_reason": {
             "type": "string",
             "nullable": true
+          },
+          "session_id": {
+            "type": "string",
+            "description": "Conversation/session identifier used by the Supervisor."
+          },
+          "selected_route": {
+            "type": "string",
+            "nullable": true,
+            "description": "Route selected by the Supervisor: inventory, supplier, both or knowledge."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "type": "object"
+            },
+            "description": "Retrieved source chunks used for grounded RAG answers, when available."
           }
         }
       },

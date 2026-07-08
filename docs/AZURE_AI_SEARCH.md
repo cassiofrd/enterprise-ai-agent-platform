@@ -181,3 +181,30 @@ User question
   -> LLM grounded answer
   -> Response with sources
 ```
+
+## Conversation memory, sources and audit
+
+The Supervisor now persists lightweight conversation turns in the local SQLite memory store. Each turn records:
+
+- `session_id`
+- `trace_id`
+- user message
+- assistant answer
+- selected route (`inventory`, `supplier`, `both`, or `knowledge`)
+- retrieved source metadata for RAG answers
+
+For direct API calls, pass `session_id` to `/copilot` or `/chat` to preserve context across turns. Example:
+
+```json
+{
+  "question": "O que a política diz sobre estoque crítico?",
+  "session_id": "demo-session-001"
+}
+```
+
+Useful audit endpoints:
+
+- `GET /conversations/{session_id}`
+- `GET /conversations?limit=50`
+
+RAG answers also return a `sources` array and instruct the LLM to cite the retrieved chunks as `[Fonte N]`.
