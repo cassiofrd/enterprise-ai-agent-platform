@@ -8,7 +8,7 @@ from urllib.parse import quote
 from typing import Annotated, Literal, Optional, Sequence, TypedDict
 
 import requests
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from pydantic import BaseModel
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -17,6 +17,7 @@ from langgraph.graph import END, StateGraph
 from shared.config import INVENTORY_AGENT_URL, SUPPLIER_AGENT_URL, ACTIVE_CHAT_MODEL
 from shared.llm import get_chat_llm
 from shared.azure_search import answer_from_knowledge, azure_search_status
+from shared.auth import require_auth
 from shared.memory import (
     format_conversation_context,
     get_recent_conversation_turns,
@@ -1238,14 +1239,14 @@ def metrics():
 
 
 @app.get("/conversations/{session_id}")
-def conversation_history(session_id: str, limit: int = 10):
+def conversation_history(session_id: str, limit: int = 10, _: None = Depends(require_auth)):
     """Return recent turns for one session for audit/debugging."""
     turns = get_recent_conversation_turns(session_id=session_id, limit=limit)
     return {"agent": "supervisor", "session_id": session_id, "turns": turns}
 
 
 @app.get("/conversations")
-def conversations(limit: int = 50):
+def conversations(limit: int = 50, _: None = Depends(require_auth)):
     """Return recent turns across sessions for lightweight audit."""
     return {"agent": "supervisor", "turns": list_conversation_turns(limit=limit)}
 
@@ -1343,7 +1344,7 @@ def chat(request: ChatRequest):
 
 
 @app.post("/copilot", response_model=CopilotResponse)
-def copilot(request: CopilotRequest):
+def copilot(request: CopilotRequest, _: None = Depends(require_auth)):
     operation = {
         "operation_id": "COPILOT-REQUEST",
         "type": "supply_chain_management",

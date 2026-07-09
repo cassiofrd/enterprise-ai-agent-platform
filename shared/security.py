@@ -15,6 +15,9 @@ import os
 from dataclasses import dataclass
 from typing import Dict, List
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 class MissingSecretError(RuntimeError):
     """Raised when a required secret is missing."""
