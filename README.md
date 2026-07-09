@@ -305,3 +305,24 @@ Recommended v2 improvements:
 - Key Vault and Managed Identity.
 - Automated Foundry evaluations.
 - Teams / Microsoft 365 Copilot publication.
+
+## Security Layer (v2.1)
+
+The project now centralizes secret management through the `SecurityProvider`.
+
+Current provider:
+
+- Environment Variables
+
+Future providers:
+
+- Azure Key Vault
+- Managed Identity
+- Microsoft Entra ID
+
+Main secrets:
+
+- OPENAI_API_KEY
+- AZURE_SEARCH_ENDPOINT
+- AZURE_SEARCH_API_KEY
+- API_TOKEN
