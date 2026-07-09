@@ -1,477 +1,307 @@
 # Enterprise AI Agent Platform
 
-Enterprise-grade multi-agent AI platform built with FastAPI, Azure Container Apps, Azure AI Search, OpenAI/Azure OpenAI, MCP and Retrieval-Augmented Generation (RAG).
+Production-style multi-agent platform for a supply-chain copilot, built with **FastAPI**, **Azure Container Apps**, **Azure AI Foundry**, **Azure AI Search**, **RAG**, contextual memory, observability and CI/CD.
 
 ![Python](https://img.shields.io/badge/Python-3.11%2B-blue)
 ![FastAPI](https://img.shields.io/badge/FastAPI-API-green)
-![Azure](https://img.shields.io/badge/Azure-Container%20Apps-blue)
-![Docker](https://img.shields.io/badge/Docker-Ready-blue)
+![Azure Container Apps](https://img.shields.io/badge/Azure-Container%20Apps-blue)
+![Azure AI Search](https://img.shields.io/badge/Azure-AI%20Search-blue)
+![Azure AI Foundry](https://img.shields.io/badge/Azure-AI%20Foundry-purple)
 ![GitHub Actions](https://img.shields.io/badge/GitHub%20Actions-CI%2FCD-black)
 ![Release](https://img.shields.io/badge/Release-v1.0.0-purple)
 
 ---
 
-## 🚀 Features
-
-- Multi-Agent Architecture
-- Long-Term Memory
-- Retrieval-Augmented Generation (RAG)
-- Azure AI Search Integration
-- MCP (Model Context Protocol)
-- Observability
-- GitHub Actions CI/CD
-- Dockerized Deployment
-- Azure Container Apps
-- OpenAI / Azure OpenAI Support
-
----
-
-## 🛠 Tech Stack
-
-- Python
-- FastAPI
-- Docker
-- Azure Container Apps
-- Azure Container Registry
-- Azure AI Search
-- OpenAI
-- Azure OpenAI
-- GitHub Actions
-- FAISS
-- MCP
-
-# Multi-Agent Supply Chain Copilot
-
-Reference architecture for an AI-powered supply chain copilot using **FastAPI**, **LangGraph**, **MCP**, **RAG**, **long-term memory**, **observability**, and **Azure Container Apps**.
-
-This project demonstrates how to build and deploy a production-style multi-agent system that can run locally, inside containers, or in Azure.
-
 ## What this project demonstrates
 
-- Multi-agent orchestration with a Supervisor Agent
-- Specialist agents exposed as FastAPI services
-- Inventory Agent with RAG, MCP tools, long-term memory, and observability
-- Supplier Agent as a second specialist service
-- OpenAI and Azure OpenAI provider abstraction
-- Local execution with Uvicorn
-- Cloud deployment with Azure Container Registry and Azure Container Apps
-- Structured logs, metrics endpoints, and trace IDs
-- Evaluation-ready project structure
+This repository is a reference implementation of an enterprise AI agent architecture:
+
+- A **Supervisor Agent** routes user questions to specialist agents.
+- **Inventory** and **Supplier** agents expose structured business capabilities through REST/OpenAPI.
+- **Azure AI Search** stores structured supply-chain entities and document chunks.
+- **RAG** answers policy and contract questions with source citations.
+- **Contextual memory** keeps session context, so follow-up questions such as “Qual é o risco dele?” can resolve the prior supplier.
+- **Trace IDs and observability** reconstruct the complete multi-agent execution flow.
+- **Streamlit** provides a demo frontend and observability dashboard.
+- **Azure AI Foundry** can act as the enterprise-facing agent layer through OpenAPI tools.
+- **GitHub Actions** runs tests and deploys agents to Azure Container Apps.
+
+---
 
 ## High-level architecture
 
 ```mermaid
-graph TD
+flowchart TD
+    User[User / Teams / Copilot / Web App / Streamlit]
+    Foundry[Azure AI Foundry Agent]
+    Streamlit[Streamlit UI]
+    Supervisor[Supervisor Agent - FastAPI]
+    Inventory[Inventory Agent - FastAPI]
+    Supplier[Supplier Agent - FastAPI]
+    Search[Azure AI Search]
+    Docs[Documents and Structured Data]
+    LLM[OpenAI / Azure OpenAI]
+    Obs[JSONL Observability + Trace Explorer]
+    GH[GitHub Actions]
+    ACR[Azure Container Registry]
+    ACA[Azure Container Apps]
 
-    User["User / Client / Copilot Studio"]
-
-    Supervisor["Supervisor Agent API"]
-    Inventory["Inventory Agent API"]
-    Supplier["Supplier Agent API"]
-
-    Memory["Long-Term Memory"]
-    AzureSearch["Azure AI Search"]
-    FAISS["Local FAISS RAG"]
-    MCP["MCP Inventory Tool Server"]
-    Observability["Observability / Metrics"]
-
-    LLM["OpenAI / Azure OpenAI"]
-
-    GitHub["GitHub Repository"]
-    Actions["GitHub Actions CI/CD"]
-    ACR["Azure Container Registry"]
-    ACA["Azure Container Apps"]
-
-    User --> Supervisor
-
+    User --> Streamlit
+    User --> Foundry
+    Streamlit --> Foundry
+    Streamlit --> Supervisor
+    Foundry -->|OpenAPI tool| Supervisor
     Supervisor --> Inventory
     Supervisor --> Supplier
-
-    Inventory --> Memory
-    Inventory --> AzureSearch
-    Inventory --> FAISS
-    Inventory --> MCP
-    Inventory --> Observability
-    Inventory --> LLM
-
-    Supplier --> Memory
-    Supplier --> LLM
-    Supplier --> Observability
-
+    Supervisor --> Search
+    Inventory --> Search
+    Supplier --> Search
+    Search --> Docs
     Supervisor --> LLM
-    Supervisor --> Observability
-
-    GitHub --> Actions
-    Actions --> ACR
+    Inventory --> LLM
+    Supplier --> LLM
+    Supervisor --> Obs
+    Inventory --> Obs
+    Supplier --> Obs
+    GH --> ACR
     ACR --> ACA
-
     ACA --> Supervisor
     ACA --> Inventory
     ACA --> Supplier
 ```
 
-Shared layer:
+In production, the UI can be replaced by **Microsoft Teams**, **Microsoft 365 Copilot**, Copilot Studio or an internal web app. The backend agents can remain unchanged because Azure AI Foundry communicates with them through OpenAPI tools.
 
-- LLM provider abstraction: OpenAI / Azure OpenAI
-- Config management
-- Schemas
-- Cache
-- Observability
+---
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a more complete diagram.
+## Main capabilities
+
+| Area | Capability |
+|---|---|
+| Multi-agent architecture | Supervisor, Inventory Agent and Supplier Agent |
+| Enterprise integration | FastAPI endpoints, OpenAPI schemas and Azure Container Apps |
+| Azure AI Foundry | Foundry Supervisor Agent profile with OpenAPI tool integration |
+| Retrieval | Azure AI Search for structured entities and document chunks |
+| RAG | Document retrieval + LLM generation + source citations |
+| Memory | Session-based contextual memory and conversation audit endpoints |
+| Observability | Trace IDs, JSONL events, `/metrics`, `/traces`, `/traces/{trace_id}` |
+| Frontend | Streamlit chat and Observability / Trace Explorer page |
+| CI/CD | GitHub Actions tests, ACR build and Container Apps deploy |
+| Testing | Pytest suite for agents, memory, OpenAPI endpoints and traces |
+
+---
+
+## Repository structure
+
+```text
+apps/
+  inventory_agent/      Inventory specialist service
+  supplier_agent/       Supplier specialist service
+  supervisor/           Multi-agent supervisor service
+  streamlit_ui/         Demo UI and observability dashboard
+shared/                 Shared config, LLM, memory, Azure Search and observability code
+openapi/                OpenAPI tool schemas for Azure AI Foundry
+scripts/                Foundry agent creation, Azure Search bootstrap and document ingestion
+data/                  Seed data and sample documents
+logs/                  Local runtime logs, ignored by git
+docs/                  Architecture, deployment, observability and release docs
+tests/                 Automated tests
+.github/workflows/     CI/CD pipelines
 ```
 
-See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for a more complete diagram.
-
-## Main components
-
-| Component | Responsibility |
-|---|---|
-| `apps/supervisor` | Routes user requests to the right specialist agent and validates responses. |
-| `apps/inventory_agent` | Handles inventory questions, RAG, memory, MCP tools, and operational recommendations. |
-| `apps/supplier_agent` | Handles supplier-related questions and supplier memory. |
-| `mcp_servers/inventory` | MCP stdio server with inventory-specific tools. |
-| `shared/llm.py` | Central provider factory for OpenAI and Azure OpenAI. |
-| `shared/memory.py` | Long-term memory persistence and search. |
-| `shared/azure_search.py` | Optional Azure AI Search integration. |
-| `evaluation/` | Evaluation datasets and scripts. |
+---
 
 ## Local setup
 
-```cmd
+```powershell
 python -m venv .venv
-.venv\Scripts\activate
+.\.venv\Scripts\activate
 python -m pip install --upgrade pip
 pip install -r requirements.txt
 copy .env.example .env
 notepad .env
 ```
 
-Fill in your `.env` file. For OpenAI:
+Minimum `.env` for OpenAI:
 
 ```env
 LLM_PROVIDER=openai
 OPENAI_API_KEY=your_key_here
 OPENAI_CHAT_MODEL=gpt-4o
 OPENAI_EMBEDDING_MODEL=text-embedding-3-small
+MODEL_TEMPERATURE=0.0
+REQUEST_TIMEOUT=60
 ```
 
-For Azure OpenAI:
+Optional Azure AI Search settings:
 
 ```env
-LLM_PROVIDER=azure_openai
-AZURE_OPENAI_ENDPOINT=https://your-resource.openai.azure.com/
-AZURE_OPENAI_API_KEY=your_key_here
-AZURE_OPENAI_CHAT_DEPLOYMENT=your-chat-deployment
-AZURE_OPENAI_EMBEDDING_DEPLOYMENT=your-embedding-deployment
-AZURE_OPENAI_API_VERSION=2024-12-01-preview
+AZURE_SEARCH_ENDPOINT=https://your-search-service.search.windows.net
+AZURE_SEARCH_ADMIN_KEY=your_admin_key
+AZURE_SEARCH_INDEX_NAME=supply-chain-docs
 ```
 
-Never commit `.env` to GitHub.
-
-## Run locally
-
-Terminal 1 — Inventory Agent:
-
-```cmd
-uvicorn apps.inventory_agent.main:app --reload --port 8001
-```
-
-Terminal 2 — Supplier Agent:
-
-```cmd
-uvicorn apps.supplier_agent.main:app --reload --port 8002
-```
-
-Terminal 3 — Supervisor Agent:
-
-```cmd
-uvicorn apps.supervisor.main:app --reload --port 8000
-```
-
-Open the Swagger UIs:
-
-```text
-http://localhost:8001/docs
-http://localhost:8002/docs
-http://localhost:8000/docs
-```
-
-## Test the Inventory Agent locally
-
-POST to `http://localhost:8001/invoke`:
-
-```json
-{
-  "operation": {},
-  "messages": [
-    {
-      "type": "human",
-      "content": "Registre que o fornecedor do PARAFUSO-M20 é XYZ Metais."
-    }
-  ],
-  "trace_id": "local-memory-001"
-}
-```
-
-Then ask:
-
-```json
-{
-  "operation": {},
-  "messages": [
-    {
-      "type": "human",
-      "content": "Qual o fornecedor do PARAFUSO-M20?"
-    }
-  ],
-  "trace_id": "local-memory-002"
-}
-```
-
-Expected response:
-
-```text
-O fornecedor do PARAFUSO-M20 é XYZ Metais. Esta informação está registrada na memória de longo prazo.
-```
-
-
-
-
-## Streamlit + Azure AI Foundry UI
-
-The Streamlit UI can now run in two modes:
-
-- **Azure AI Foundry**: sends user questions to a Foundry Agent that can call the Inventory Agent through OpenAPI tools.
-- **Supervisor Container Apps**: fallback mode that sends questions directly to the existing Supervisor endpoint.
-
-Required local settings for Foundry mode:
+Optional Azure AI Foundry settings:
 
 ```env
 AZURE_AI_PROJECT_ENDPOINT=https://your-foundry-resource.services.ai.azure.com/api/projects/your-project
+FOUNDRY_AGENT_KEY=supervisor_agent
 FOUNDRY_AGENT_ID=asst_your_agent_id
-# Optional, used when the agent id is stored in deployment/foundry_agents.json
-FOUNDRY_AGENT_KEY=inventory_agent
 FOUNDRY_AGENT_DEPLOYMENT_FILE=deployment/foundry_agents.json
 ```
 
-Run the UI with:
+Never commit `.env`, API keys, local databases or logs.
 
-```cmd
+---
+
+## Run locally
+
+Open three terminals.
+
+Inventory Agent:
+
+```powershell
+uvicorn apps.inventory_agent.main:app --reload --port 8001
+```
+
+Supplier Agent:
+
+```powershell
+uvicorn apps.supplier_agent.main:app --reload --port 8002
+```
+
+Supervisor Agent:
+
+```powershell
+uvicorn apps.supervisor.main:app --reload --port 8000
+```
+
+Streamlit UI:
+
+```powershell
 streamlit run apps/streamlit_ui/app.py
 ```
 
-When running locally, Azure authentication must be available to `DefaultAzureCredential` (for example through Azure CLI, VS Code Azure sign-in, or Cloud Shell). The UI keeps the old Supervisor endpoint as a fallback for environments where Foundry authentication is not available.
-
-The UI also includes a lightweight observability panel in the sidebar. For each question it records the selected backend, execution status, total duration, Foundry Agent ID, run ID and thread ID when available. Events are written locally as JSONL to:
+Swagger UIs:
 
 ```text
-logs/streamlit_foundry_events.jsonl
+http://localhost:8000/docs
+http://localhost:8001/docs
+http://localhost:8002/docs
 ```
 
-You can override this path with:
+---
 
-```env
-STREAMLIT_OBSERVABILITY_LOG=logs/streamlit_foundry_events.jsonl
-```
+## Bootstrap Azure AI Search
 
-## Automated tests
-
-Run the first automated quality gate with:
-
-```cmd
-pytest -q
-```
-
-The current test suite validates long-term memory persistence, product-code extraction, Portuguese memory-save triggers, the Inventory Agent health endpoint, and an end-to-end `/invoke` memory save/retrieve flow using a deterministic LLM double. Functional LLM/RAG quality checks are handled by the evaluation scripts in `evaluation/`.
-
-## GitHub release guide
-
-See [`docs/GITHUB_RELEASE_GUIDE.md`](docs/GITHUB_RELEASE_GUIDE.md) for the final checklist before publishing the repository.
-
-## Azure deployment
-
-The project supports a no-Docker-local workflow using **Azure Container Registry Tasks**:
-
-```powershell
-az acr build `
-  --registry registrodecontainercassiofrd `
-  --image inventory-agent:v6-2 `
-  --file Dockerfile.inventory `
-  .
-```
-
-Then update the Container App:
-
-```powershell
-az containerapp update `
-  --name inventory-agent `
-  --resource-group grupoderecursos_cassiofrd `
-  --image registrodecontainercassiofrd.azurecr.io/inventory-agent:v6-2
-```
-
-See [`docs/AZURE_DEPLOYMENT.md`](docs/AZURE_DEPLOYMENT.md) for the full deployment guide.
-
-## API examples
-
-See [`docs/API_EXAMPLES.md`](docs/API_EXAMPLES.md).
-
-## OpenAPI tool endpoints for Azure AI Foundry
-
-In addition to the conversational `/invoke` endpoint, the Inventory Agent exposes
-simple REST endpoints designed for OpenAPI-based tool calling platforms such as
-Azure AI Foundry and Copilot Studio.
-
-Examples:
-
-```text
-GET /products/{code}
-GET /inventory-policy/{code}
-GET /suppliers/{supplier_name}/products
-GET /purchasing-policy
-```
-
-These endpoints expose specific business capabilities with predictable request
-and response schemas, while `/invoke` remains available for conversational
-LangGraph-based agent interactions.
-
-
-## Provider configuration
-
-The project can switch between OpenAI and Azure OpenAI without changing application code:
-
-```env
-LLM_PROVIDER=openai
-```
-
-or:
-
-```env
-LLM_PROVIDER=azure_openai
-```
-
-See [`PROVIDER_CONFIGURATION.md`](PROVIDER_CONFIGURATION.md).
-
-## Observability
-
-Each request receives a `trace_id`. Events are logged to:
-
-```text
-logs/agent_events.jsonl
-```
-
-Metrics are available at:
-
-```text
-GET /metrics
-```
-
-Health check:
-
-```text
-GET /health
-```
-
-## Release status
-
-Current release: **v1.0 / project version v6.2**
-
-Validated capabilities:
-
-- Local Inventory Agent startup with Uvicorn
-- RAG over local FAISS index
-- Long-term memory save and retrieval
-- ACR image build without local Docker
-- Azure Container Apps deployment
-- Memory retrieval working in Azure Container Apps
-
-## Roadmap
-
-- Add automated pytest suite
-- Add evaluation pipeline with response scoring
-- Add Redis-backed memory
-- Expand Azure AI Search retrieval
-- Add Supervisor + Supplier deployment validation
-- Continue Azure AI Foundry implementation and comparison
-- Add CI/CD with GitHub Actions
-
-
-## Azure AI Foundry Supervisor Agent
-
-The recommended Foundry integration is now the **Supervisor Foundry Agent**.
-
-```text
-Streamlit
-  ↓
-Azure AI Foundry Agent
-  ↓
-OpenAPI tool: POST /copilot
-  ↓
-Supervisor Agent
-  ↓
-Inventory Agent + Supplier Agent
-```
-
-Create/update the Foundry agent that calls the Supervisor endpoint:
-
-```powershell
-$env:FOUNDRY_AGENT_KEY="supervisor_agent"
-python scripts/create_foundry_agent.py
-```
-
-The script stores the created ID in:
-
-```text
-deployment/foundry_agents.json
-```
-
-For local Streamlit execution, you can also set one of these variables in `.env`:
-
-```env
-FOUNDRY_AGENT_KEY=supervisor_agent
-FOUNDRY_AGENT_ID=asst_...
-# or
-FOUNDRY_SUPERVISOR_AGENT_ID=asst_...
-```
-
-The older specialist-only Foundry agents can still be created by changing `FOUNDRY_AGENT_KEY`:
-
-```powershell
-$env:FOUNDRY_AGENT_KEY="inventory_agent"
-python scripts/create_foundry_agent.py
-
-$env:FOUNDRY_AGENT_KEY="supplier_agent"
-python scripts/create_foundry_agent.py
-```
-
-
-## Azure AI Search structured knowledge layer
-
-Inventory and Supplier endpoints can now use Azure AI Search as an optional structured knowledge source. If Azure AI Search is configured, the APIs first look up indexed business entities such as products and suppliers. If it is not configured, the project falls back to local reference data, so tests and local demos continue to work.
-
-Bootstrap the demo index:
+Create structured supply-chain documents:
 
 ```powershell
 python scripts/bootstrap_azure_search.py
 ```
 
-Check the active data source:
+Ingest document chunks for RAG:
+
+```powershell
+python scripts/ingest_knowledge_documents.py
+```
+
+Check data source status:
 
 ```powershell
 curl.exe http://localhost:8001/data-source-status
 curl.exe http://localhost:8002/data-source-status
 ```
 
-See `docs/AZURE_AI_SEARCH.md` for details.
+---
 
-## Observability Trace Explorer
+## Example tests
 
-The project now includes a lightweight trace explorer for the multi-agent flow. Each agent exposes:
+Structured question:
 
-```text
-GET /metrics
-GET /traces
-GET /traces/{trace_id}
+```powershell
+$body = @{ question = "Quem fornece o PARAFUSO-M20?"; session_id = "demo-001" } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8000/copilot" -Method POST -ContentType "application/json; charset=utf-8" -Body $body
 ```
 
-The Streamlit Observability page can show a trace timeline with routing decisions, specialist calls, latency by step, token/cost metadata and raw events. See `docs/OBSERVABILITY.md` for details.
+Contextual follow-up:
+
+```powershell
+$body = @{ question = "Qual é o risco dele?"; session_id = "demo-001" } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8000/copilot" -Method POST -ContentType "application/json; charset=utf-8" -Body $body
+```
+
+RAG with sources:
+
+```powershell
+$body = @{ question = "O que a política diz sobre estoque crítico?"; session_id = "demo-rag-001" } | ConvertTo-Json
+Invoke-RestMethod -Uri "http://localhost:8000/copilot" -Method POST -ContentType "application/json; charset=utf-8" -Body $body
+```
+
+Trace inspection:
+
+```powershell
+Invoke-RestMethod -Uri "http://localhost:8000/traces" -Method GET
+Invoke-RestMethod -Uri "http://localhost:8000/traces/<TRACE_ID>" -Method GET
+```
+
+---
+
+## Automated tests
+
+```powershell
+$env:PYTHONPATH = (Get-Location).Path
+pytest -q
+```
+
+The current suite validates health endpoints, memory, contextual follow-ups, OpenAPI tool endpoints, supplier endpoints and trace reconstruction.
+
+---
+
+## Azure deployment
+
+The repository includes GitHub Actions workflows for:
+
+- running tests on push and pull request;
+- building images in Azure Container Registry;
+- deploying Inventory, Supplier and Supervisor agents to Azure Container Apps.
+
+Required GitHub secret:
+
+```text
+AZURE_CREDENTIALS
+```
+
+Runtime secrets such as `OPENAI_API_KEY` and `AZURE_SEARCH_ADMIN_KEY` should be configured as Container Apps secrets or through a future Key Vault / Managed Identity integration.
+
+---
+
+## Documentation
+
+- [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) — architecture and request flows.
+- [`docs/AZURE_AI_SEARCH.md`](docs/AZURE_AI_SEARCH.md) — structured retrieval and document RAG.
+- [`docs/OBSERVABILITY.md`](docs/OBSERVABILITY.md) — metrics, traces and Trace Explorer.
+- [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md) — v1.0 status and v2 production roadmap.
+- [`docs/RELEASE_CHECKLIST.md`](docs/RELEASE_CHECKLIST.md) — final release checklist.
+- [`RELEASE_NOTES_V1.md`](RELEASE_NOTES_V1.md) — v1.0 release notes.
+
+---
+
+## v1.0 scope
+
+This version is a stable reference platform for a multi-agent supply-chain copilot:
+
+- Supervisor + specialist agents.
+- Azure AI Search structured data and document RAG.
+- Contextual memory and conversation audit.
+- Trace-based observability and Streamlit Trace Explorer.
+- CI/CD and Azure Container Apps deployment.
+
+Recommended v2 improvements:
+
+- Application Insights / OpenTelemetry export.
+- Redis cache and distributed memory.
+- Microsoft Entra ID authentication and RBAC.
+- Key Vault and Managed Identity.
+- Automated Foundry evaluations.
+- Teams / Microsoft 365 Copilot publication.
