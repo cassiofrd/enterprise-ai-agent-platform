@@ -2,16 +2,31 @@ import os
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("LLM_PROVIDER", "openai")
+os.environ.setdefault("API_TOKEN", "CHANGE_ME")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from apps.supplier_agent.main import app  # noqa: E402
 
 
 client = TestClient(app)
+AUTH_HEADERS = {"Authorization": "Bearer CHANGE_ME"}
+
+
+def test_list_suppliers_requires_authentication():
+    response = client.get("/suppliers")
+    assert response.status_code == 401
+
+
+def test_list_suppliers_rejects_invalid_token():
+    response = client.get(
+        "/suppliers",
+        headers={"Authorization": "Bearer WRONG_TOKEN"},
+    )
+    assert response.status_code == 401
 
 
 def test_list_suppliers_returns_reference_data():
-    response = client.get("/suppliers")
+    response = client.get("/suppliers", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     suppliers = response.json()["suppliers"]
@@ -20,7 +35,7 @@ def test_list_suppliers_returns_reference_data():
 
 
 def test_get_supplier_returns_structured_profile():
-    response = client.get("/suppliers/XYZ%20Metais")
+    response = client.get("/suppliers/XYZ%20Metais", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     supplier = response.json()["supplier"]
@@ -31,14 +46,14 @@ def test_get_supplier_returns_structured_profile():
 
 
 def test_get_supplier_products_returns_product_codes():
-    response = client.get("/suppliers/XYZ%20Metais/products")
+    response = client.get("/suppliers/XYZ%20Metais/products", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     assert response.json()["products"] == ["PARAFUSO-M20"]
 
 
 def test_get_supplier_contracts_returns_active_contract():
-    response = client.get("/suppliers/XYZ%20Metais/contracts")
+    response = client.get("/suppliers/XYZ%20Metais/contracts", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     contracts = response.json()["contracts"]
@@ -47,7 +62,7 @@ def test_get_supplier_contracts_returns_active_contract():
 
 
 def test_get_supplier_performance_returns_sla_metrics():
-    response = client.get("/suppliers/XYZ%20Metais/performance")
+    response = client.get("/suppliers/XYZ%20Metais/performance", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     performance = response.json()["performance"]
@@ -56,7 +71,7 @@ def test_get_supplier_performance_returns_sla_metrics():
 
 
 def test_get_unknown_supplier_returns_404():
-    response = client.get("/suppliers/Fornecedor%20Inexistente")
+    response = client.get("/suppliers/Fornecedor%20Inexistente", headers=AUTH_HEADERS)
 
     assert response.status_code == 404
     assert "Supplier not found" in response.json()["detail"]

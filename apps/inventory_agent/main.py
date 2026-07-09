@@ -5,7 +5,7 @@ import json
 import re
 import time
 
-from fastapi import FastAPI, Query, HTTPException
+from fastapi import Depends, FastAPI, Query, HTTPException
 from pydantic import BaseModel
 
 from mcp import ClientSession, StdioServerParameters
@@ -51,6 +51,7 @@ from shared.azure_search import (
     search_supply_chain_docs,
 )
 from shared.llm import get_chat_llm, get_embeddings
+from shared.auth import require_auth
 
 
 app = FastAPI(title="Inventory Agent Server with MCP, Vector RAG and Observability")
@@ -803,7 +804,7 @@ def to_langchain_message(message) -> BaseMessage:
 
 
 @app.post("/invoke")
-def invoke_inventory_agent(request: InventoryRequest):
+def invoke_inventory_agent(request: InventoryRequest, _: None = Depends(require_auth)):
     trace_id = request.trace_id or new_trace_id()
     operation = request.operation or {
         "operation_id": "UNKNOWN",
@@ -965,7 +966,7 @@ def invoke_inventory_agent(request: InventoryRequest):
 
 
 @app.get("/products/{code}")
-def get_product(code: str):
+def get_product(code: str, _: None = Depends(require_auth)):
     """Return structured product information for OpenAPI tool calling.
 
     This endpoint is intentionally simple so external agents can call it as a
@@ -1009,7 +1010,7 @@ def get_product(code: str):
 
 
 @app.get("/inventory-policy/{code}")
-def get_inventory_policy(code: str):
+def get_inventory_policy(code: str, _: None = Depends(require_auth)):
     """Return the inventory policy for a product code.
 
     The policy is derived by combining the product's ABC class with the ABC
@@ -1059,7 +1060,7 @@ def get_inventory_policy(code: str):
 
 
 @app.get("/suppliers/{supplier_name}/products")
-def get_products_by_supplier(supplier_name: str):
+def get_products_by_supplier(supplier_name: str, _: None = Depends(require_auth)):
     """Return products associated with a preferred supplier."""
     endpoint = "/suppliers/{supplier_name}/products"
     start = time.perf_counter()
@@ -1113,7 +1114,7 @@ def get_products_by_supplier(supplier_name: str):
 
 
 @app.get("/purchasing-policy")
-def get_purchasing_policy():
+def get_purchasing_policy(_: None = Depends(require_auth)):
     """Return structured purchasing policy information."""
     endpoint = "/purchasing-policy"
     start = time.perf_counter()
@@ -1139,7 +1140,7 @@ def get_purchasing_policy():
 
 
 @app.post("/knowledge/search")
-def knowledge_search(request: KnowledgeSearchRequest):
+def knowledge_search(request: KnowledgeSearchRequest, _: None = Depends(require_auth)):
     """Search document chunks for inventory-related policies and guidance."""
     start = time.perf_counter()
     result = answer_from_knowledge(
@@ -1159,7 +1160,7 @@ def knowledge_search(request: KnowledgeSearchRequest):
     return {"agent": "inventory", **result}
 
 @app.get("/data-source-status")
-def data_source_status():
+def data_source_status(_: None = Depends(require_auth)):
     return {
         "agent": "inventory",
         "structured_data_source": "azure_ai_search" if azure_search_enabled() else "local_reference_data",
@@ -1169,7 +1170,7 @@ def data_source_status():
 
 
 @app.get("/memories")
-def memories(limit: int = Query(default=50, ge=1, le=200)):
+def memories(limit: int = Query(default=50, ge=1, le=200), _: None = Depends(require_auth)):
     return {
         "agent": "inventory",
         "memories": list_memories(limit=limit),
@@ -1180,6 +1181,7 @@ def memories(limit: int = Query(default=50, ge=1, le=200)):
 def memories_search(
     query: str = Query(..., min_length=1),
     limit: int = Query(default=20, ge=1, le=100),
+    _: None = Depends(require_auth),
 ):
     return {
         "agent": "inventory",
@@ -1189,7 +1191,7 @@ def memories_search(
 
 
 @app.delete("/memories/{memory_id}")
-def memories_delete(memory_id: str):
+def memories_delete(memory_id: str, _: None = Depends(require_auth)):
     deleted = delete_memory(memory_id)
 
     log_event(
@@ -1213,7 +1215,7 @@ def memories_delete(memory_id: str):
 
 
 @app.get("/metrics")
-def metrics():
+def metrics(_: None = Depends(require_auth)):
     return {
         "agent": "inventory",
         "summary": get_metrics_summary(),
@@ -1239,14 +1241,14 @@ def health():
     }
 
 @app.get("/traces")
-def traces(limit: int = 50):
+def traces(limit: int = 50, _: None = Depends(require_auth)):
     return {
         "traces": get_trace_index(limit=limit),
     }
 
 
 @app.get("/traces/{trace_id}")
-def trace_detail(trace_id: str, limit: int = 500):
+def trace_detail(trace_id: str, limit: int = 500, _: None = Depends(require_auth)):
     return {
         "summary": get_trace_summary(trace_id),
         "events": get_trace_events(trace_id, limit=limit),

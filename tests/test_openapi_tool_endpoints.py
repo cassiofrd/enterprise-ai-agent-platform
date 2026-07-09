@@ -2,16 +2,31 @@ import os
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("LLM_PROVIDER", "openai")
+os.environ.setdefault("API_TOKEN", "CHANGE_ME")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from apps.inventory_agent.main import app  # noqa: E402
 
 
 client = TestClient(app)
+AUTH_HEADERS = {"Authorization": "Bearer CHANGE_ME"}
+
+
+def test_get_product_requires_authentication():
+    response = client.get("/products/PARAFUSO-M20")
+    assert response.status_code == 401
+
+
+def test_get_product_rejects_invalid_token():
+    response = client.get(
+        "/products/PARAFUSO-M20",
+        headers={"Authorization": "Bearer WRONG_TOKEN"},
+    )
+    assert response.status_code == 401
 
 
 def test_get_product_returns_structured_catalog_and_policy():
-    response = client.get("/products/PARAFUSO-M20")
+    response = client.get("/products/PARAFUSO-M20", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     product = response.json()["product"]
@@ -23,7 +38,7 @@ def test_get_product_returns_structured_catalog_and_policy():
 
 
 def test_get_inventory_policy_combines_product_class_and_policy():
-    response = client.get("/inventory-policy/PARAFUSO-M20")
+    response = client.get("/inventory-policy/PARAFUSO-M20", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     payload = response.json()
@@ -34,14 +49,14 @@ def test_get_inventory_policy_combines_product_class_and_policy():
 
 
 def test_get_unknown_product_returns_404():
-    response = client.get("/products/PARAFUSO-M30")
+    response = client.get("/products/PARAFUSO-M30", headers=AUTH_HEADERS)
 
     assert response.status_code == 404
     assert "Product not found" in response.json()["detail"]
 
 
 def test_get_products_by_supplier_returns_matching_products():
-    response = client.get("/suppliers/XYZ%20Metais/products")
+    response = client.get("/suppliers/XYZ%20Metais/products", headers=AUTH_HEADERS)
 
     assert response.status_code == 200
     products = response.json()["products"]

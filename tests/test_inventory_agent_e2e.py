@@ -2,12 +2,16 @@ import os
 
 os.environ.setdefault("OPENAI_API_KEY", "test-key")
 os.environ.setdefault("LLM_PROVIDER", "openai")
+os.environ.setdefault("API_TOKEN", "CHANGE_ME")
 
 from fastapi.testclient import TestClient  # noqa: E402
 from langchain_core.messages import AIMessage  # noqa: E402
 
 from apps.inventory_agent import main as inventory_main  # noqa: E402
 from shared import memory  # noqa: E402
+
+
+AUTH_HEADERS = {"Authorization": "Bearer CHANGE_ME"}
 
 
 class DummyInventoryLLM:
@@ -40,6 +44,7 @@ def test_inventory_agent_memory_save_and_retrieve_end_to_end(tmp_path, monkeypat
 
     save_response = client.post(
         "/invoke",
+        headers=AUTH_HEADERS,
         json={
             "operation": {},
             "messages": [
@@ -57,6 +62,7 @@ def test_inventory_agent_memory_save_and_retrieve_end_to_end(tmp_path, monkeypat
 
     retrieve_response = client.post(
         "/invoke",
+        headers=AUTH_HEADERS,
         json={
             "operation": {},
             "messages": [

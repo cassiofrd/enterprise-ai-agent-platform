@@ -18,6 +18,7 @@ from shared.config import INVENTORY_AGENT_URL, SUPPLIER_AGENT_URL, ACTIVE_CHAT_M
 from shared.llm import get_chat_llm
 from shared.azure_search import answer_from_knowledge, azure_search_status
 from shared.auth import require_auth
+from shared.security import security
 from shared.memory import (
     format_conversation_context,
     get_recent_conversation_turns,
@@ -237,9 +238,14 @@ def call_specialist_agent(
                     attempt=attempt,
                 )
 
+                headers = {}
+                if security.api_token:
+                    headers["Authorization"] = f"Bearer {security.api_token}"
+
                 response = requests.post(
                     target_url,
                     json=payload,
+                    headers=headers,
                     timeout=timeout_seconds,
                 )
                 response.raise_for_status()
@@ -502,7 +508,11 @@ def _structured_get(
     )
 
     start = time.perf_counter()
-    response = requests.get(url, timeout=timeout_seconds)
+    headers = {}
+    if security.api_token:
+        headers["Authorization"] = f"Bearer {security.api_token}"
+
+    response = requests.get(url, headers=headers, timeout=timeout_seconds)
     latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
     log_event(
@@ -1186,7 +1196,7 @@ graph = construct_graph()
 
 
 @app.post("/knowledge/search")
-def knowledge_search(request: KnowledgeSearchRequest):
+def knowledge_search(request: KnowledgeSearchRequest, _: None = Depends(require_auth)):
     """Search document chunks across Azure AI Search for supervisor-level RAG."""
     trace_id = new_trace_id()
     start = time.perf_counter()
@@ -1210,7 +1220,7 @@ def knowledge_search(request: KnowledgeSearchRequest):
 
 
 @app.post("/knowledge/answer", response_model=KnowledgeAnswerResponse)
-def knowledge_answer(request: KnowledgeAnswerRequest):
+def knowledge_answer(request: KnowledgeAnswerRequest, _: None = Depends(require_auth)):
     """Retrieve document chunks and generate a final grounded answer."""
     trace_id = new_trace_id()
     result = build_grounded_knowledge_answer(
@@ -1229,7 +1239,7 @@ def knowledge_answer(request: KnowledgeAnswerRequest):
 
 
 @app.get("/metrics")
-def metrics():
+def metrics(_: None = Depends(require_auth)):
     return {
         "agent": "supervisor",
         "summary": get_metrics_summary(),
@@ -1261,7 +1271,7 @@ def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
-def chat(request: ChatRequest):
+def chat(request: ChatRequest, _: None = Depends(require_auth)):
     trace_id = new_trace_id()
 
     operation = request.operation or {
@@ -1410,14 +1420,14 @@ if __name__ == "__main__":
 
 
 @app.get("/traces")
-def traces(limit: int = 50):
+def traces(limit: int = 50, _: None = Depends(require_auth)):
     return {
         "traces": get_trace_index(limit=limit),
     }
 
 
 @app.get("/traces/{trace_id}")
-def trace_detail(trace_id: str, limit: int = 500):
+def trace_detail(trace_id: str, limit: int = 500, _: None = Depends(require_auth)):
     return {
         "summary": get_trace_summary(trace_id),
         "events": get_trace_events(trace_id, limit=limit),

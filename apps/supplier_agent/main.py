@@ -5,7 +5,7 @@ import time
 import re
 from pathlib import Path
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.tool import ToolMessage
@@ -36,6 +36,7 @@ from shared.azure_search import (
     search_supply_chain_docs,
 )
 from shared.llm import get_chat_llm
+from shared.auth import require_auth
 
 
 app = FastAPI(title="Supplier Agent API")
@@ -413,7 +414,7 @@ def to_langchain_message(message) -> BaseMessage:
 
 
 @app.post("/invoke")
-def invoke_supplier_agent(request: SupplierRequest):
+def invoke_supplier_agent(request: SupplierRequest, _: None = Depends(require_auth)):
     trace_id = request.trace_id or new_trace_id()
     operation = request.operation or {
         "operation_id": "UNKNOWN",
@@ -562,7 +563,7 @@ def invoke_supplier_agent(request: SupplierRequest):
 
 
 @app.get("/suppliers")
-def get_suppliers():
+def get_suppliers(_: None = Depends(require_auth)):
     start = time.perf_counter()
     suppliers = [
         supplier_summary(name, supplier)
@@ -583,7 +584,7 @@ def get_suppliers():
 
 
 @app.get("/suppliers/{supplier_name}")
-def get_supplier(supplier_name: str):
+def get_supplier(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
     canonical_name, supplier = find_supplier(supplier_name)
     if not supplier:
@@ -615,7 +616,7 @@ def get_supplier(supplier_name: str):
 
 
 @app.get("/suppliers/{supplier_name}/products")
-def get_supplier_products(supplier_name: str):
+def get_supplier_products(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
     canonical_name, supplier = find_supplier(supplier_name)
     if not supplier:
@@ -650,7 +651,7 @@ def get_supplier_products(supplier_name: str):
 
 
 @app.get("/suppliers/{supplier_name}/contracts")
-def get_supplier_contracts(supplier_name: str):
+def get_supplier_contracts(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
     canonical_name, supplier = find_supplier(supplier_name)
     if not supplier:
@@ -685,7 +686,7 @@ def get_supplier_contracts(supplier_name: str):
 
 
 @app.get("/suppliers/{supplier_name}/performance")
-def get_supplier_performance(supplier_name: str):
+def get_supplier_performance(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
     canonical_name, supplier = find_supplier(supplier_name)
     if not supplier:
@@ -727,7 +728,7 @@ def get_supplier_performance(supplier_name: str):
 
 
 @app.post("/knowledge/search")
-def knowledge_search(request: KnowledgeSearchRequest):
+def knowledge_search(request: KnowledgeSearchRequest, _: None = Depends(require_auth)):
     """Search document chunks for supplier contracts, performance and procurement guidance."""
     start = time.perf_counter()
     result = answer_from_knowledge(
@@ -747,7 +748,7 @@ def knowledge_search(request: KnowledgeSearchRequest):
     return {"agent": "supplier", **result}
 
 @app.get("/data-source-status")
-def data_source_status():
+def data_source_status(_: None = Depends(require_auth)):
     return {
         "agent": "supplier",
         "structured_data_source": "azure_ai_search" if azure_search_enabled() else "local_reference_data",
@@ -757,7 +758,7 @@ def data_source_status():
 
 
 @app.get("/metrics")
-def metrics():
+def metrics(_: None = Depends(require_auth)):
     return {
         "agent": "supplier",
         "summary": get_metrics_summary(),
@@ -775,7 +776,7 @@ def only_supplier_memories(memories: list[dict]) -> list[dict]:
 
 
 @app.get("/memories")
-def memories():
+def memories(_: None = Depends(require_auth)):
     all_memories = list_memories(limit=200)
     supplier_memories = only_supplier_memories(all_memories)
 
@@ -786,7 +787,7 @@ def memories():
 
 
 @app.get("/memories/search")
-def search_memories_endpoint(query: str, limit: int = 20):
+def search_memories_endpoint(query: str, limit: int = 20, _: None = Depends(require_auth)):
     all_matches = search_memories(query=query, limit=limit)
     supplier_matches = only_supplier_memories(all_matches)
 
@@ -798,7 +799,7 @@ def search_memories_endpoint(query: str, limit: int = 20):
 
 
 @app.delete("/memories/{memory_id}")
-def delete_memory_endpoint(memory_id: str):
+def delete_memory_endpoint(memory_id: str, _: None = Depends(require_auth)):
     supplier_memories = only_supplier_memories(list_memories(limit=500))
     supplier_memory_ids = {str(memory.get("id")) for memory in supplier_memories}
 
@@ -854,14 +855,14 @@ def health():
 
 
 @app.get("/traces")
-def traces(limit: int = 50):
+def traces(limit: int = 50, _: None = Depends(require_auth)):
     return {
         "traces": get_trace_index(limit=limit),
     }
 
 
 @app.get("/traces/{trace_id}")
-def trace_detail(trace_id: str, limit: int = 500):
+def trace_detail(trace_id: str, limit: int = 500, _: None = Depends(require_auth)):
     return {
         "summary": get_trace_summary(trace_id),
         "events": get_trace_events(trace_id, limit=limit),

@@ -12,6 +12,8 @@ import requests
 import streamlit as st
 from dotenv import load_dotenv
 
+from shared.security import security
+
 try:
     from azure.identity import DefaultAzureCredential
     from azure.ai.agents import AgentsClient
@@ -171,6 +173,12 @@ def ask_foundry_agent(question: str, project_endpoint: str, agent_id: str) -> di
     }
 
 
+def auth_headers() -> dict[str, str]:
+    if security.api_token:
+        return {"Authorization": f"Bearer {security.api_token}"}
+    return {}
+
+
 def ask_supervisor(question: str, api_url: str, session_id: str | None = None) -> dict[str, Any]:
     payload = {"question": question}
     if session_id:
@@ -179,6 +187,7 @@ def ask_supervisor(question: str, api_url: str, session_id: str | None = None) -
     response = requests.post(
         api_url,
         json=payload,
+        headers=auth_headers(),
         timeout=180,
     )
     response.raise_for_status()
