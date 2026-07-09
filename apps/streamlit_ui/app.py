@@ -13,6 +13,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from shared.security import security
+from shared.settings import settings
 
 try:
     from azure.identity import DefaultAzureCredential
@@ -230,17 +231,17 @@ with st.sidebar:
     )
 
     project_endpoint = ""
-    deployment_file = os.getenv("FOUNDRY_AGENT_DEPLOYMENT_FILE", DEFAULT_DEPLOYMENT_FILE)
+    deployment_file = settings.foundry_agent_deployment_file or DEFAULT_DEPLOYMENT_FILE
     agent_key = DEFAULT_AGENT_KEY
     agent_id = ""
     detected_agent_id = None
     tool_endpoint = None
-    supervisor_url = os.getenv("SUPERVISOR_URL", DEFAULT_SUPERVISOR_URL)
+    supervisor_url = settings.supervisor_url or DEFAULT_SUPERVISOR_URL
 
     if runtime == "Azure AI Foundry":
         project_endpoint = st.text_input(
             "Foundry project endpoint",
-            value=os.getenv("AZURE_AI_PROJECT_ENDPOINT", ""),
+            value=settings.azure_ai_project_endpoint or "",
             help="Exemplo: https://...services.ai.azure.com/api/projects/...",
         )
         deployment_file = st.text_input(
@@ -249,7 +250,7 @@ with st.sidebar:
         )
 
         known_agent_keys = ["supervisor_agent", "inventory_agent", "supplier_agent"]
-        env_agent_key = os.getenv("FOUNDRY_AGENT_KEY", DEFAULT_AGENT_KEY)
+        env_agent_key = settings.foundry_agent_key or DEFAULT_AGENT_KEY
         default_agent_index = known_agent_keys.index(env_agent_key) if env_agent_key in known_agent_keys else 0
         agent_key = st.selectbox(
             "Agent key",
@@ -259,10 +260,10 @@ with st.sidebar:
         )
 
         detected_agent_id = _load_foundry_agent_id(deployment_file, agent_key)
-        key_specific_agent_id = os.getenv(f"FOUNDRY_{agent_key.upper()}_ID", "")
+        key_specific_agent_id = security.get(f"FOUNDRY_{agent_key.upper()}_ID", "") or ""
         agent_id = st.text_input(
             "Foundry Agent ID",
-            value=os.getenv("FOUNDRY_AGENT_ID", key_specific_agent_id or detected_agent_id or ""),
+            value=settings.foundry_agent_id or key_specific_agent_id or detected_agent_id or "",
             help=(
                 "Pode vir de FOUNDRY_AGENT_ID, de uma variável específica como "
                 "FOUNDRY_SUPERVISOR_AGENT_ID, ou de deployment/foundry_agents.json."
@@ -324,7 +325,7 @@ with st.sidebar:
     else:
         st.caption("Nenhuma execução registrada nesta sessão.")
 
-    st.caption(f"Log local: {os.getenv('STREAMLIT_OBSERVABILITY_LOG', DEFAULT_OBSERVABILITY_LOG)}")
+    st.caption(f"Log local: {settings.streamlit_observability_log or DEFAULT_OBSERVABILITY_LOG}")
 
     st.caption(f"Session ID: `{st.session_state.get('session_id', '-')}`")
 
@@ -429,7 +430,7 @@ if question:
             event["finished_at"] = _utc_now_iso()
             st.session_state.last_execution = event
             st.session_state.execution_history.append(event)
-            _append_jsonl(os.getenv("STREAMLIT_OBSERVABILITY_LOG", DEFAULT_OBSERVABILITY_LOG), event)
+            _append_jsonl(settings.streamlit_observability_log or DEFAULT_OBSERVABILITY_LOG, event)
 
             with st.expander("Detalhes da execução"):
                 st.json({"result": result, "observability": event})
@@ -445,7 +446,7 @@ if question:
             )
             st.session_state.last_execution = event
             st.session_state.execution_history.append(event)
-            _append_jsonl(os.getenv("STREAMLIT_OBSERVABILITY_LOG", DEFAULT_OBSERVABILITY_LOG), event)
+            _append_jsonl(settings.streamlit_observability_log or DEFAULT_OBSERVABILITY_LOG, event)
 
             st.error(f"Falha ao processar a pergunta: {exc}")
             st.info(

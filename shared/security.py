@@ -107,6 +107,12 @@ class SecurityProvider:
                 for s in self.OPTIONAL_SECRETS
             },
         }
+    
+    def require(self, name: str) -> str:
+        value = self.get(name)
+        if not value:
+            raise MissingSecretError(f"Missing required secret: {name}")
+        return value
 
 
 security = SecurityProvider()
