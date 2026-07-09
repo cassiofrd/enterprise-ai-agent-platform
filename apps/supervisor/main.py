@@ -14,7 +14,7 @@ from pydantic import BaseModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langgraph.graph import END, StateGraph
 
-from shared.config import INVENTORY_AGENT_URL, SUPPLIER_AGENT_URL, ACTIVE_CHAT_MODEL
+from shared.settings import settings
 from shared.llm import get_chat_llm
 from shared.azure_search import answer_from_knowledge, azure_search_status
 from shared.auth import require_auth
@@ -37,6 +37,11 @@ from shared.observability import (
     get_trace_summary,
 )
 
+
+
+INVENTORY_AGENT_URL = settings.inventory_agent_url or "http://localhost:8001/invoke"
+SUPPLIER_AGENT_URL = settings.supplier_agent_url or "http://localhost:8002/invoke"
+ACTIVE_CHAT_MODEL = settings.active_chat_model or "gpt-4o-mini"
 
 app = FastAPI(title="Supervisor Agent API")
 

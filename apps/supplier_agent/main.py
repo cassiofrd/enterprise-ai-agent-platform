@@ -11,7 +11,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langchain_core.messages.tool import ToolMessage
 from langchain_core.tools import tool
 
-from shared.config import ACTIVE_CHAT_MODEL, AZURE_SEARCH_ENDPOINT, AZURE_SEARCH_INDEX_NAME
+from shared.settings import settings
 from shared.memory import delete_memory, list_memories, save_memory, search_memories
 from shared.observability import (
     get_metrics_summary,
@@ -38,6 +38,15 @@ from shared.azure_search import (
 from shared.llm import get_chat_llm
 from shared.auth import require_auth
 
+
+
+ACTIVE_CHAT_MODEL = settings.active_chat_model or "gpt-4o-mini"
+AZURE_SEARCH_ENDPOINT = settings.azure_search_endpoint
+AZURE_SEARCH_INDEX_NAME = (
+    settings.azure_search_index_name
+    or settings.azure_search_index
+    or "supply-chain-docs"
+)
 
 app = FastAPI(title="Supplier Agent API")
 

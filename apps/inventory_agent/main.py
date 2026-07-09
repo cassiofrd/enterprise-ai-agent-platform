@@ -22,12 +22,9 @@ from shared.memory import save_memory, search_memories, list_memories, delete_me
 from shared.config import (
     KNOWLEDGE_BASE_PATH,
     MCP_INVENTORY_SERVER_MODULE,
-    ACTIVE_CHAT_MODEL,
-    ACTIVE_EMBEDDING_MODEL,
     VECTOR_INDEX_PATH,
-    AZURE_SEARCH_ENDPOINT,
-    AZURE_SEARCH_INDEX_NAME,
 )
+from shared.settings import settings
 from shared.observability import (
     get_metrics_summary,
     get_recent_events,
@@ -53,6 +50,16 @@ from shared.azure_search import (
 from shared.llm import get_chat_llm, get_embeddings
 from shared.auth import require_auth
 
+
+
+ACTIVE_CHAT_MODEL = settings.active_chat_model or "gpt-4o-mini"
+ACTIVE_EMBEDDING_MODEL = settings.active_embedding_model or "text-embedding-3-small"
+AZURE_SEARCH_ENDPOINT = settings.azure_search_endpoint
+AZURE_SEARCH_INDEX_NAME = (
+    settings.azure_search_index_name
+    or settings.azure_search_index
+    or "supply-chain-docs"
+)
 
 app = FastAPI(title="Inventory Agent Server with MCP, Vector RAG and Observability")
 
