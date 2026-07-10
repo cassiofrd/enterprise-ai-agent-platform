@@ -47,6 +47,12 @@ class AppSettings:
     redis_socket_connect_timeout_seconds: float
     redis_socket_timeout_seconds: float
 
+    # Distributed memory
+    memory_backend: str
+    memory_key_prefix: str
+    conversation_memory_ttl_seconds: int
+    long_term_memory_ttl_seconds: int
+
     # Resilience
     a2a_max_attempts: int
     a2a_retry_backoff_seconds: float
@@ -84,6 +90,15 @@ def _get_float(name: str, default: float, minimum: float = 0.0) -> float:
 
     if value < minimum:
         raise ValueError(f"{name} must be greater than or equal to {minimum}.")
+    return value
+
+
+def _get_choice(name: str, default: str, allowed: set[str]) -> str:
+    raw_value = security.get(name)
+    value = (raw_value or default).strip().lower()
+    if value not in allowed:
+        allowed_values = ", ".join(sorted(allowed))
+        raise ValueError(f"{name} must be one of: {allowed_values}.")
     return value
 
 
@@ -127,6 +142,26 @@ def load_settings() -> AppSettings:
             "REDIS_SOCKET_TIMEOUT_SECONDS",
             default=1.0,
             minimum=0.1,
+        ),
+
+        memory_backend=_get_choice(
+            "MEMORY_BACKEND",
+            default="auto",
+            allowed={"auto", "redis", "sqlite"},
+        ),
+        memory_key_prefix=security.get(
+            "MEMORY_KEY_PREFIX",
+            "enterprise-ai-agent-memory",
+        ) or "enterprise-ai-agent-memory",
+        conversation_memory_ttl_seconds=_get_int(
+            "CONVERSATION_MEMORY_TTL_SECONDS",
+            default=604800,
+            minimum=0,
+        ),
+        long_term_memory_ttl_seconds=_get_int(
+            "LONG_TERM_MEMORY_TTL_SECONDS",
+            default=0,
+            minimum=0,
         ),
 
         a2a_max_attempts=_get_int("A2A_MAX_ATTEMPTS", default=2),

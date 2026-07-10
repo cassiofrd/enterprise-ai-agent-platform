@@ -1,39 +1,90 @@
 from __future__ import annotations
 
-import sqlite3
-import uuid
 from datetime import datetime, timezone
 from typing import Any
 
+from shared.cache import get_redis_client
 from shared.config import DATA_DIR, MEMORY_DB_PATH
+from shared.observability import log_event
+from shared.redis_memory_store import RedisMemoryStore
+from shared.settings import settings
+from shared.sqlite_memory_store import SQLiteMemoryStore
 
 
 def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
-def get_connection() -> sqlite3.Connection:
-    DATA_DIR.mkdir(parents=True, exist_ok=True)
-    conn = sqlite3.connect(MEMORY_DB_PATH)
-    conn.row_factory = sqlite3.Row
-    return conn
+def _sqlite_store() -> SQLiteMemoryStore:
+    # Read module globals on every call so existing tests can monkeypatch paths.
+    return SQLiteMemoryStore(
+        data_dir=DATA_DIR,
+        db_path=MEMORY_DB_PATH,
+    )
+
+
+def _redis_store() -> RedisMemoryStore | None:
+    client = get_redis_client()
+    if client is None:
+        return None
+
+    return RedisMemoryStore(
+        client=client,
+        key_prefix=getattr(
+            settings,
+            "memory_key_prefix",
+            "enterprise-ai-agent-memory",
+        ),
+        conversation_ttl_seconds=getattr(
+            settings,
+            "conversation_memory_ttl_seconds",
+            604800,
+        ),
+        long_term_ttl_seconds=getattr(
+            settings,
+            "long_term_memory_ttl_seconds",
+            0,
+        ),
+    )
+
+
+def _selected_store():
+    backend = getattr(settings, "memory_backend", "auto").strip().lower()
+
+    if backend in {"auto", "redis"}:
+        store = _redis_store()
+        if store is not None:
+            return store
+
+        if backend == "redis":
+            log_event(
+                "memory.redis.unavailable",
+                requested_backend="redis",
+                fallback_backend="sqlite",
+            )
+
+    return _sqlite_store()
+
+
+def memory_backend() -> str:
+    return _selected_store().health().get("backend", "sqlite")
+
+
+def memory_health() -> dict[str, Any]:
+    store = _selected_store()
+    status = store.health()
+    status["requested_backend"] = getattr(settings, "memory_backend", "auto")
+    status["fallback_enabled"] = True
+    return status
 
 
 def init_memory_db() -> None:
-    with get_connection() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS agent_memories (
-                id TEXT PRIMARY KEY,
-                memory_type TEXT NOT NULL,
-                key TEXT NOT NULL,
-                value TEXT NOT NULL,
-                source_agent TEXT NOT NULL,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.commit()
+    # Preserved for backward compatibility with callers and tests.
+    _sqlite_store()._init_schema()
+
+
+def init_conversation_db() -> None:
+    _sqlite_store()._init_schema()
 
 
 def save_memory(
@@ -42,105 +93,50 @@ def save_memory(
     memory_type: str = "fact",
     source_agent: str = "inventory",
 ) -> str:
-    init_memory_db()
-    memory_id = str(uuid.uuid4())
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO agent_memories (
-                id, memory_type, key, value, source_agent, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?)
-            """,
-            (memory_id, memory_type, key, value, source_agent, now_iso()),
-        )
-        conn.commit()
-
+    store = _selected_store()
+    memory_id = store.save_memory(
+        key=key,
+        value=value,
+        memory_type=memory_type,
+        source_agent=source_agent,
+    )
+    log_event(
+        "memory.store.save",
+        backend=store.health().get("backend"),
+        memory_id=memory_id,
+        memory_type=memory_type,
+        source_agent=source_agent,
+    )
     return memory_id
 
 
 def search_memories(query: str, limit: int = 10) -> list[dict[str, Any]]:
-    init_memory_db()
-    pattern = f"%{query}%"
-
-    with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, memory_type, key, value, source_agent, created_at
-            FROM agent_memories
-            WHERE key LIKE ? OR value LIKE ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (pattern, pattern, limit),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
+    store = _selected_store()
+    results = store.search_memories(query=query, limit=limit)
+    log_event(
+        "memory.store.search",
+        backend=store.health().get("backend"),
+        query=query,
+        result_count=len(results),
+    )
+    return results
 
 
 def list_memories(limit: int = 50) -> list[dict[str, Any]]:
-    init_memory_db()
+    store = _selected_store()
+    return store.list_memories(limit=limit)
 
-    with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, memory_type, key, value, source_agent, created_at
-            FROM agent_memories
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-    return [dict(row) for row in rows]
 
 def delete_memory(memory_id: str) -> bool:
-    init_memory_db()
-
-    with get_connection() as conn:
-        cursor = conn.execute(
-            """
-            DELETE FROM agent_memories
-            WHERE id = ?
-            """,
-            (memory_id,),
-        )
-        conn.commit()
-
-    return cursor.rowcount > 0
-
-
-
-# ---------------------------------------------------------------------------
-# Conversation memory
-# ---------------------------------------------------------------------------
-
-def init_conversation_db() -> None:
-    """Create the lightweight conversation memory table used by the Supervisor."""
-    init_memory_db()
-    with get_connection() as conn:
-        conn.execute(
-            """
-            CREATE TABLE IF NOT EXISTS conversation_turns (
-                id TEXT PRIMARY KEY,
-                session_id TEXT NOT NULL,
-                trace_id TEXT,
-                user_message TEXT NOT NULL,
-                assistant_message TEXT NOT NULL,
-                route TEXT,
-                sources_json TEXT,
-                created_at TEXT NOT NULL
-            )
-            """
-        )
-        conn.execute(
-            """
-            CREATE INDEX IF NOT EXISTS idx_conversation_turns_session_created
-            ON conversation_turns(session_id, created_at)
-            """
-        )
-        conn.commit()
+    store = _selected_store()
+    deleted = store.delete_memory(memory_id=memory_id)
+    log_event(
+        "memory.store.delete",
+        backend=store.health().get("backend"),
+        memory_id=memory_id,
+        deleted=deleted,
+    )
+    return deleted
 
 
 def save_conversation_turn(
@@ -152,78 +148,46 @@ def save_conversation_turn(
     route: str | None = None,
     sources: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Persist one conversational turn for short conversation memory and audit."""
-    import json
-
-    init_conversation_db()
-    turn_id = str(uuid.uuid4())
-
-    with get_connection() as conn:
-        conn.execute(
-            """
-            INSERT INTO conversation_turns (
-                id, session_id, trace_id, user_message, assistant_message,
-                route, sources_json, created_at
-            )
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (
-                turn_id,
-                session_id,
-                trace_id,
-                user_message,
-                assistant_message,
-                route,
-                json.dumps(sources or [], ensure_ascii=False),
-                now_iso(),
-            ),
-        )
-        conn.commit()
-
+    store = _selected_store()
+    turn_id = store.save_conversation_turn(
+        session_id=session_id,
+        user_message=user_message,
+        assistant_message=assistant_message,
+        trace_id=trace_id,
+        route=route,
+        sources=sources or [],
+    )
+    log_event(
+        "conversation.store.save",
+        backend=store.health().get("backend"),
+        session_id=session_id,
+        turn_id=turn_id,
+    )
     return turn_id
 
 
-def get_recent_conversation_turns(session_id: str, limit: int = 6) -> list[dict[str, Any]]:
-    """Return recent turns in chronological order for a specific session."""
-    import json
-
-    init_conversation_db()
-
-    with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, session_id, trace_id, user_message, assistant_message,
-                   route, sources_json, created_at
-            FROM conversation_turns
-            WHERE session_id = ?
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (session_id, limit),
-        ).fetchall()
-
-    turns: list[dict[str, Any]] = []
-    for row in reversed(rows):
-        item = dict(row)
-        try:
-            item["sources"] = json.loads(item.pop("sources_json") or "[]")
-        except json.JSONDecodeError:
-            item["sources"] = []
-        turns.append(item)
-
-    return turns
+def get_recent_conversation_turns(
+    session_id: str,
+    limit: int = 6,
+) -> list[dict[str, Any]]:
+    return _selected_store().get_recent_conversation_turns(
+        session_id=session_id,
+        limit=limit,
+    )
 
 
 def format_conversation_context(session_id: str, limit: int = 6) -> str:
-    """Format recent conversation turns for prompt injection."""
-    turns = get_recent_conversation_turns(session_id=session_id, limit=limit)
+    turns = get_recent_conversation_turns(
+        session_id=session_id,
+        limit=limit,
+    )
     if not turns:
         return "Sem histórico recente para esta sessão."
 
     lines: list[str] = []
-    for idx, turn in enumerate(turns, start=1):
+    for index, turn in enumerate(turns, start=1):
         route = turn.get("route") or "unknown"
-        lines.append(f"Turno {idx} | rota={route}")
+        lines.append(f"Turno {index} | rota={route}")
         lines.append(f"Usuário: {turn.get('user_message', '')}")
         lines.append(f"Assistente: {turn.get('assistant_message', '')}")
 
@@ -231,29 +195,4 @@ def format_conversation_context(session_id: str, limit: int = 6) -> str:
 
 
 def list_conversation_turns(limit: int = 50) -> list[dict[str, Any]]:
-    """Return recent turns across sessions for audit/debug endpoints."""
-    import json
-
-    init_conversation_db()
-    with get_connection() as conn:
-        rows = conn.execute(
-            """
-            SELECT id, session_id, trace_id, user_message, assistant_message,
-                   route, sources_json, created_at
-            FROM conversation_turns
-            ORDER BY created_at DESC
-            LIMIT ?
-            """,
-            (limit,),
-        ).fetchall()
-
-    results: list[dict[str, Any]] = []
-    for row in rows:
-        item = dict(row)
-        try:
-            item["sources"] = json.loads(item.pop("sources_json") or "[]")
-        except json.JSONDecodeError:
-            item["sources"] = []
-        results.append(item)
-
-    return results
+    return _selected_store().list_conversation_turns(limit=limit)
