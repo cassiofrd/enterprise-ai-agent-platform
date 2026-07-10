@@ -12,6 +12,9 @@ load_dotenv()
 @dataclass(frozen=True)
 class AppSettings:
     # Runtime
+    app_version: str
+    app_environment: str
+    build_sha: str | None
     llm_provider: str | None
     active_chat_model: str | None
     active_embedding_model: str | None
@@ -122,6 +125,9 @@ def _get_bool(name: str, default: bool = False) -> bool:
 
 def load_settings() -> AppSettings:
     return AppSettings(
+        app_version=security.get("APP_VERSION", "2.3.3") or "2.3.3",
+        app_environment=security.get("APP_ENVIRONMENT", "local") or "local",
+        build_sha=security.get("BUILD_SHA") or security.get("GITHUB_SHA"),
         llm_provider=security.get("LLM_PROVIDER"),
         active_chat_model=security.get("ACTIVE_CHAT_MODEL") or security.get("OPENAI_CHAT_MODEL"),
         active_embedding_model=security.get("ACTIVE_EMBEDDING_MODEL") or security.get("OPENAI_EMBEDDING_MODEL"),

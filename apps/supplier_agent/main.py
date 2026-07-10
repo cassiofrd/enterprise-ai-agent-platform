@@ -4,7 +4,7 @@ import json
 import time
 import re
 
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, HTTPException, Response
 from pydantic import BaseModel
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
 from langchain_core.messages.tool import ToolMessage
@@ -42,6 +42,20 @@ from shared.services.supplier_service import SupplierNotFoundError, SupplierServ
 
 
 ACTIVE_CHAT_MODEL = settings.active_chat_model or "gpt-4o-mini"
+from shared.operational import (
+    cache_readiness,
+    diagnostics_payload,
+    liveness_payload,
+    memory_readiness,
+    readiness_payload,
+    search_readiness,
+    telemetry_readiness,
+)
+from shared.cache import cache_health
+from shared.memory import memory_health
+from shared.telemetry import telemetry_status
+
+
 AZURE_SEARCH_ENDPOINT = settings.azure_search_endpoint
 AZURE_SEARCH_INDEX_NAME = (
     settings.azure_search_index_name
@@ -798,28 +812,69 @@ def delete_memory_endpoint(memory_id: str, _: None = Depends(require_auth)):
     }
 
 
+def _operational_checks():
+    return [
+        ("cache", lambda: cache_readiness(cache_health), False),
+        ("memory", lambda: memory_readiness(memory_health), True),
+        ("azure_ai_search", lambda: search_readiness(azure_search_status), False),
+        ("telemetry", lambda: telemetry_readiness(telemetry_status), False),
+    ]
+
 @app.get("/health")
 def health():
+    readiness, _ = readiness_payload(
+        service_name="supplier",
+        checks=_operational_checks(),
+    )
     return {
-        "status": "ok",
+        "status": "ok" if readiness["status"] == "ready" else "degraded",
         "agent": "supplier",
-        "observability": "jsonl",
-        "memory": "sqlite",
-        "azure_ai_search": "enabled" if azure_search_enabled() else "disabled",
-        "azure_ai_search_status": azure_search_status(),
-        "azure_ai_search_endpoint": AZURE_SEARCH_ENDPOINT,
-        "azure_ai_search_index": AZURE_SEARCH_INDEX_NAME,
+        "version": settings.app_version,
+        "environment": settings.app_environment,
+        "build_sha": settings.build_sha,
+        "readiness": readiness,
         "capabilities": [
-            "supplier_memory",
-            "supplier_risk",
-            "supplier_comparison",
-            "alternate_supplier_recommendation",
-            "supplier_rest_api",
-            "supplier_contract_lookup",
-            "supplier_performance_lookup",
-        ],
+        "supplier_memory",
+        "supplier_risk",
+        "supplier_comparison",
+        "alternate_supplier_recommendation",
+        "supplier_contract_lookup",
+        "supplier_performance_lookup",
+        "opentelemetry"
+],
     }
 
+
+@app.get("/live")
+def live():
+    return liveness_payload(service_name="supplier")
+
+
+@app.get("/ready")
+def ready(response: Response):
+    payload, status_code = readiness_payload(
+        service_name="supplier",
+        checks=_operational_checks(),
+    )
+    response.status_code = status_code
+    return payload
+
+
+@app.get("/diagnostics")
+def diagnostics(_: None = Depends(require_auth)):
+    return diagnostics_payload(
+        service_name="supplier",
+        checks=_operational_checks(),
+        capabilities=[
+        "supplier_memory",
+        "supplier_risk",
+        "supplier_comparison",
+        "alternate_supplier_recommendation",
+        "supplier_contract_lookup",
+        "supplier_performance_lookup",
+        "opentelemetry"
+],
+    )
 
 @app.get("/traces")
 def traces(limit: int = 50, _: None = Depends(require_auth)):

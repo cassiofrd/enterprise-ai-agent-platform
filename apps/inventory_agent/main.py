@@ -5,7 +5,7 @@ import json
 import re
 import time
 
-from fastapi import Depends, FastAPI, Query, HTTPException
+from fastapi import Depends, FastAPI, Query, HTTPException, Response
 from pydantic import BaseModel
 
 from mcp import ClientSession, StdioServerParameters
@@ -56,6 +56,20 @@ from shared.services.inventory_service import InventoryNotFoundError, InventoryS
 
 ACTIVE_CHAT_MODEL = settings.active_chat_model or "gpt-4o-mini"
 ACTIVE_EMBEDDING_MODEL = settings.active_embedding_model or "text-embedding-3-small"
+from shared.operational import (
+    cache_readiness,
+    diagnostics_payload,
+    liveness_payload,
+    memory_readiness,
+    readiness_payload,
+    search_readiness,
+    telemetry_readiness,
+)
+from shared.cache import cache_health
+from shared.memory import memory_health
+from shared.telemetry import telemetry_status
+
+
 AZURE_SEARCH_ENDPOINT = settings.azure_search_endpoint
 AZURE_SEARCH_INDEX_NAME = (
     settings.azure_search_index_name
@@ -1137,21 +1151,79 @@ def metrics(_: None = Depends(require_auth)):
     }
 
 
+def _operational_checks():
+    return [
+        ("cache", lambda: cache_readiness(cache_health), False),
+        ("memory", lambda: memory_readiness(memory_health), True),
+        ("azure_ai_search", lambda: search_readiness(azure_search_status), False),
+        ("telemetry", lambda: telemetry_readiness(telemetry_status), False),
+        (
+            "local_vector_index",
+            lambda: {
+                "available": VECTOR_INDEX_PATH.exists(),
+                "path": str(VECTOR_INDEX_PATH),
+            },
+            False,
+        ),
+    ]
+
 @app.get("/health")
 def health():
+    readiness, _ = readiness_payload(
+        service_name="inventory",
+        checks=_operational_checks(),
+    )
     return {
-        "status": "ok",
+        "status": "ok" if readiness["status"] == "ready" else "degraded",
         "agent": "inventory",
-        "rag": "vector-faiss",
-        "azure_ai_search": "enabled" if azure_search_enabled() else "disabled",
-        "azure_ai_search_status": azure_search_status(),
-        "azure_ai_search_endpoint": AZURE_SEARCH_ENDPOINT,
-        "azure_ai_search_index": AZURE_SEARCH_INDEX_NAME,
-        "mcp": "enabled",
-        "observability": "jsonl",
-        "cache_backend": cache_backend(),
-        "index_path": str(VECTOR_INDEX_PATH),
+        "version": settings.app_version,
+        "environment": settings.app_environment,
+        "build_sha": settings.build_sha,
+        "readiness": readiness,
+        "capabilities": [
+        "inventory_memory",
+        "product_lookup",
+        "inventory_policy",
+        "vector_rag",
+        "azure_ai_search",
+        "mcp",
+        "distributed_cache",
+        "opentelemetry"
+],
     }
+
+
+@app.get("/live")
+def live():
+    return liveness_payload(service_name="inventory")
+
+
+@app.get("/ready")
+def ready(response: Response):
+    payload, status_code = readiness_payload(
+        service_name="inventory",
+        checks=_operational_checks(),
+    )
+    response.status_code = status_code
+    return payload
+
+
+@app.get("/diagnostics")
+def diagnostics(_: None = Depends(require_auth)):
+    return diagnostics_payload(
+        service_name="inventory",
+        checks=_operational_checks(),
+        capabilities=[
+        "inventory_memory",
+        "product_lookup",
+        "inventory_policy",
+        "vector_rag",
+        "azure_ai_search",
+        "mcp",
+        "distributed_cache",
+        "opentelemetry"
+],
+    )
 
 @app.get("/traces")
 def traces(limit: int = 50, _: None = Depends(require_auth)):

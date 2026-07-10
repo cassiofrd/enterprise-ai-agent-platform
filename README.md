@@ -326,3 +326,28 @@ Main secrets:
 - AZURE_SEARCH_ENDPOINT
 - AZURE_SEARCH_API_KEY
 - API_TOKEN
+
+## Operational readiness
+
+Every service exposes Kubernetes/Azure Container Apps-friendly probes:
+
+| Endpoint | Authentication | Purpose |
+|---|---:|---|
+| `GET /live` | No | Confirms that the process is running. It never calls external dependencies. |
+| `GET /ready` | No | Returns `200` when required dependencies are ready and `503` otherwise. |
+| `GET /health` | No | Human-readable summary including version, environment, capabilities and dependency state. |
+| `GET /diagnostics` | Bearer token | Detailed operational diagnostics for authorized operators. |
+
+Release metadata is supplied through:
+
+```env
+APP_VERSION=2.3.3
+APP_ENVIRONMENT=production
+BUILD_SHA=<git-commit-sha>
+```
+
+The Azure Container Apps health probes should use `/live` for liveness and
+`/ready` for readiness. Optional integrations such as Azure AI Search,
+Redis cache fallback and OpenTelemetry do not mark the process unavailable
+unless they are configured as required dependencies.
+

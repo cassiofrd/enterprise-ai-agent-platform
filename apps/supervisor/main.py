@@ -9,7 +9,7 @@ from urllib.parse import quote
 from typing import Annotated, Literal, Optional, Sequence, TypedDict
 
 import requests
-from fastapi import Depends, FastAPI, Request
+from fastapi import Depends, FastAPI, Request, Response
 from pydantic import BaseModel
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -50,6 +50,20 @@ from shared.request_context import (
 )
 from shared.tracing import start_span
 
+
+
+from shared.operational import (
+    cache_readiness,
+    diagnostics_payload,
+    liveness_payload,
+    memory_readiness,
+    readiness_payload,
+    search_readiness,
+    telemetry_readiness,
+)
+from shared.cache import cache_health
+from shared.memory import memory_health
+from shared.telemetry import telemetry_status
 
 
 INVENTORY_AGENT_URL = settings.inventory_agent_url or "http://localhost:8001/invoke"
@@ -1781,22 +1795,87 @@ def conversations(limit: int = 50, _: None = Depends(require_auth)):
     return {"agent": "supervisor", "turns": list_conversation_turns(limit=limit)}
 
 
+def _operational_checks():
+    return [
+        ("cache", lambda: cache_readiness(cache_health), False),
+        ("memory", lambda: memory_readiness(memory_health), True),
+        ("azure_ai_search", lambda: search_readiness(azure_search_status), False),
+        ("telemetry", lambda: telemetry_readiness(telemetry_status), False),
+        (
+            "inventory_agent_configuration",
+            lambda: {
+                "available": bool(INVENTORY_AGENT_URL),
+                "url_configured": bool(INVENTORY_AGENT_URL),
+            },
+            True,
+        ),
+        (
+            "supplier_agent_configuration",
+            lambda: {
+                "available": bool(SUPPLIER_AGENT_URL),
+                "url_configured": bool(SUPPLIER_AGENT_URL),
+            },
+            True,
+        ),
+    ]
+
 @app.get("/health")
 def health():
+    readiness, _ = readiness_payload(
+        service_name="supervisor",
+        checks=_operational_checks(),
+    )
     return {
-        "status": "ok",
+        "status": "ok" if readiness["status"] == "ready" else "degraded",
         "agent": "supervisor",
-        "routes": ["inventory", "supplier", "both", "knowledge"],
-        "resilience": {
-            "max_attempts": A2A_MAX_ATTEMPTS,
-            "retry_backoff_seconds": A2A_RETRY_BACKOFF_SECONDS,
-            "circuit_breakers": {
-                name: breaker.snapshot().__dict__
-                for name, breaker in CIRCUIT_BREAKERS.items()
-            },
-        },
+        "version": settings.app_version,
+        "environment": settings.app_environment,
+        "build_sha": settings.build_sha,
+        "readiness": readiness,
+        "capabilities": [
+        "multi_agent_orchestration",
+        "inventory_routing",
+        "supplier_routing",
+        "knowledge_rag",
+        "distributed_cache",
+        "distributed_memory",
+        "circuit_breaker",
+        "opentelemetry"
+],
     }
 
+
+@app.get("/live")
+def live():
+    return liveness_payload(service_name="supervisor")
+
+
+@app.get("/ready")
+def ready(response: Response):
+    payload, status_code = readiness_payload(
+        service_name="supervisor",
+        checks=_operational_checks(),
+    )
+    response.status_code = status_code
+    return payload
+
+
+@app.get("/diagnostics")
+def diagnostics(_: None = Depends(require_auth)):
+    return diagnostics_payload(
+        service_name="supervisor",
+        checks=_operational_checks(),
+        capabilities=[
+        "multi_agent_orchestration",
+        "inventory_routing",
+        "supplier_routing",
+        "knowledge_rag",
+        "distributed_cache",
+        "distributed_memory",
+        "circuit_breaker",
+        "opentelemetry"
+],
+    )
 
 @app.post("/chat", response_model=ChatResponse)
 @measure_time("api.chat.handler")
