@@ -4,6 +4,7 @@ import json
 import operator
 import re
 import time
+from concurrent.futures import ThreadPoolExecutor
 from urllib.parse import quote
 from typing import Annotated, Literal, Optional, Sequence, TypedDict
 
@@ -733,7 +734,14 @@ def _answer_supplier_structured(*, question: str, supplier_name: str, trace_id: 
 
 
 def multi_agent_node(state: AgentState):
-    """Answer hybrid questions using deterministic REST endpoints from both specialists."""
+    """Answer hybrid questions with concurrent structured REST calls.
+
+    Product and inventory-policy lookups start at the same time. As soon as the
+    product lookup resolves the preferred supplier, the supplier lookup is
+    submitted while the policy lookup may still be running. All calls share the
+    same trace_id, and failures are isolated so a partial answer can still be
+    returned.
+    """
     trace_id = state.get("trace_id") or new_trace_id()
     user_messages = [m.content for m in state["messages"] if m.type == "human"]
     user_question = user_messages[-1] if user_messages else ""
@@ -745,7 +753,7 @@ def multi_agent_node(state: AgentState):
         route="both",
         question_preview=user_question[:500],
         product_code=product_code,
-        strategy="structured_rest",
+        strategy="parallel_structured_rest",
     )
 
     if not product_code:
@@ -772,72 +780,144 @@ def multi_agent_node(state: AgentState):
     policy_payload: dict = {}
     supplier_payload: dict = {}
     errors: list[str] = []
+    supplier_name: str | None = None
 
-    try:
-        product_payload = _structured_get(
+    orchestration_started_at = time.perf_counter()
+
+    with ThreadPoolExecutor(
+        max_workers=3,
+        thread_name_prefix="supervisor-multi-agent",
+    ) as executor:
+        product_future = executor.submit(
+            _structured_get,
             base_url=inventory_base_url,
             path=f"/products/{quote(product_code)}",
             trace_id=trace_id,
             tool_operation="getProduct",
         )
-    except Exception as exc:
-        errors.append(f"produto {product_code}: {exc}")
-        log_event(
-            "supervisor.multi_agent.structured_inventory_product.error",
-            trace_id=trace_id,
-            product_code=product_code,
-            error_type=type(exc).__name__,
-            error_message=str(exc),
-        )
-
-    try:
-        policy_payload = _structured_get(
+        policy_future = executor.submit(
+            _structured_get,
             base_url=inventory_base_url,
             path=f"/inventory-policy/{quote(product_code)}",
             trace_id=trace_id,
             tool_operation="getInventoryPolicy",
         )
-    except Exception as exc:
-        errors.append(f"política de estoque {product_code}: {exc}")
+
         log_event(
-            "supervisor.multi_agent.structured_inventory_policy.error",
+            "supervisor.multi_agent.parallel.submitted",
             trace_id=trace_id,
             product_code=product_code,
-            error_type=type(exc).__name__,
-            error_message=str(exc),
+            submitted_calls=["getProduct", "getInventoryPolicy"],
         )
 
-    product = product_payload.get("product", {}) if isinstance(product_payload, dict) else {}
-    supplier_name = product.get("preferred_supplier")
-
-    if supplier_name:
+        # The supplier call depends on the product result, but it can start while
+        # the inventory-policy request is still in flight.
         try:
-            supplier_payload = _structured_get(
+            product_payload = product_future.result()
+            product = (
+                product_payload.get("product", {})
+                if isinstance(product_payload, dict)
+                else {}
+            )
+            supplier_name = product.get("preferred_supplier")
+        except Exception as exc:
+            product = {}
+            errors.append(f"produto {product_code}: {exc}")
+            log_event(
+                "supervisor.multi_agent.structured_inventory_product.error",
+                trace_id=trace_id,
+                product_code=product_code,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+
+        supplier_future = None
+        if supplier_name:
+            supplier_future = executor.submit(
+                _structured_get,
                 base_url=supplier_base_url,
                 path=f"/suppliers/{quote(supplier_name)}",
                 trace_id=trace_id,
                 tool_operation="getSupplier",
             )
-        except Exception as exc:
-            errors.append(f"fornecedor {supplier_name}: {exc}")
             log_event(
-                "supervisor.multi_agent.structured_supplier.error",
+                "supervisor.multi_agent.parallel.supplier_submitted",
                 trace_id=trace_id,
+                product_code=product_code,
                 supplier_name=supplier_name,
+            )
+
+        try:
+            policy_payload = policy_future.result()
+        except Exception as exc:
+            errors.append(f"política de estoque {product_code}: {exc}")
+            log_event(
+                "supervisor.multi_agent.structured_inventory_policy.error",
+                trace_id=trace_id,
+                product_code=product_code,
                 error_type=type(exc).__name__,
                 error_message=str(exc),
             )
 
-    policy = product.get("inventory_policy") or policy_payload.get("inventory_policy", {})
-    supplier = supplier_payload.get("supplier", {}) if isinstance(supplier_payload, dict) else {}
+        if supplier_future is not None:
+            try:
+                supplier_payload = supplier_future.result()
+            except Exception as exc:
+                errors.append(f"fornecedor {supplier_name}: {exc}")
+                log_event(
+                    "supervisor.multi_agent.structured_supplier.error",
+                    trace_id=trace_id,
+                    supplier_name=supplier_name,
+                    error_type=type(exc).__name__,
+                    error_message=str(exc),
+                )
 
-    if not product and not policy_payload:
+    total_latency_ms = round(
+        (time.perf_counter() - orchestration_started_at) * 1000,
+        2,
+    )
+
+    product = (
+        product_payload.get("product", {})
+        if isinstance(product_payload, dict)
+        else {}
+    )
+    supplier = (
+        supplier_payload.get("supplier", {})
+        if isinstance(supplier_payload, dict)
+        else {}
+    )
+
+    # Product payloads may already contain inventory_policy. The dedicated
+    # endpoint returns the field as policy.
+    policy = (
+        product.get("inventory_policy")
+        or policy_payload.get("policy", {})
+        or policy_payload.get("inventory_policy", {})
+    )
+
+    log_event(
+        "supervisor.multi_agent.parallel.completed",
+        trace_id=trace_id,
+        product_code=product_code,
+        supplier_name=supplier_name,
+        total_latency_ms=total_latency_ms,
+        product_available=bool(product),
+        policy_available=bool(policy),
+        supplier_available=bool(supplier),
+        error_count=len(errors),
+    )
+
+    if not product and not policy:
         answer = (
             f"Não encontrei dados estruturados para o produto {product_code}. "
             "Não foi possível consolidar fornecedor e política de estoque."
         )
     else:
-        answer_lines = [f"O produto {product_code} é fornecido por {supplier_name or 'fornecedor não encontrado'}."]
+        answer_lines = [
+            f"O produto {product_code} é fornecido por "
+            f"{supplier_name or 'fornecedor não encontrado'}."
+        ]
 
         if supplier:
             supplier_details = []
@@ -846,19 +926,34 @@ def multi_agent_node(state: AgentState):
             if supplier.get("risk_level"):
                 supplier_details.append(f"risco {supplier['risk_level']}")
             if supplier.get("city") and supplier.get("state"):
-                supplier_details.append(f"localização {supplier['city']}/{supplier['state']}")
+                supplier_details.append(
+                    f"localização {supplier['city']}/{supplier['state']}"
+                )
             if supplier_details:
-                answer_lines.append("Dados do fornecedor: " + ", ".join(supplier_details) + ".")
+                answer_lines.append(
+                    "Dados do fornecedor: "
+                    + ", ".join(supplier_details)
+                    + "."
+                )
 
         abc_class = product.get("abc_class") or policy_payload.get("abc_class")
         policy_text = _format_inventory_policy(policy)
         if abc_class:
-            answer_lines.append(f"A classe ABC do item é {abc_class}. A política de estoque define {policy_text}.")
+            answer_lines.append(
+                f"A classe ABC do item é {abc_class}. "
+                f"A política de estoque define {policy_text}."
+            )
         else:
-            answer_lines.append(f"A política de estoque define {policy_text}.")
+            answer_lines.append(
+                f"A política de estoque define {policy_text}."
+            )
 
         if errors:
-            answer_lines.append("Alguns dados complementares não foram encontrados: " + "; ".join(errors) + ".")
+            answer_lines.append(
+                "Alguns dados complementares não foram encontrados: "
+                + "; ".join(errors)
+                + "."
+            )
 
         answer = " ".join(answer_lines)
 
@@ -867,7 +962,8 @@ def multi_agent_node(state: AgentState):
         trace_id=trace_id,
         product_code=product_code,
         supplier_name=supplier_name,
-        strategy="structured_rest",
+        strategy="parallel_structured_rest",
+        total_latency_ms=total_latency_ms,
         response_preview=answer[:500],
     )
 
@@ -877,7 +973,6 @@ def multi_agent_node(state: AgentState):
         "selected_route": "both",
         "sources": [],
     }
-
 
 
 def build_grounded_knowledge_answer(
