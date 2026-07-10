@@ -25,21 +25,21 @@ _REDIS_LOCK = RLock()
 
 
 def _namespaced_key(key: str) -> str:
-    normalized_prefix = getattr(settings, "cache_key_prefix", "enterprise-ai-agent").strip().strip(":")
+    normalized_prefix = settings.cache_key_prefix.strip().strip(":")
     normalized_key = key.strip()
     return f"{normalized_prefix}:{normalized_key}" if normalized_prefix else normalized_key
 
 
 def get_redis_url() -> str | None:
-    return getattr(settings, "redis_url", None)
+    return settings.redis_url
 
 
 def _build_redis_client(redis_url: str) -> redis.Redis:
     return redis.from_url(
         redis_url,
         decode_responses=True,
-        socket_connect_timeout=getattr(settings, "redis_socket_connect_timeout_seconds", 1.0),
-        socket_timeout=getattr(settings, "redis_socket_timeout_seconds", 1.0),
+        socket_connect_timeout=settings.redis_socket_connect_timeout_seconds,
+        socket_timeout=settings.redis_socket_timeout_seconds,
         health_check_interval=30,
     )
 
@@ -160,7 +160,7 @@ def cache_set(
 ) -> None:
     namespaced_key = _namespaced_key(key)
     effective_ttl = (
-        getattr(settings, "cache_default_ttl_seconds", 3600)
+        settings.cache_default_ttl_seconds
         if ttl_seconds is None
         else ttl_seconds
     )
@@ -250,8 +250,8 @@ def cache_health() -> dict:
             "redis_configured": bool(get_redis_url()),
             "redis_available": False,
             "memory_cache_size": memory_cache_size(),
-            "key_prefix": getattr(settings, "cache_key_prefix", "enterprise-ai-agent"),
-            "default_ttl_seconds": getattr(settings, "cache_default_ttl_seconds", 3600),
+            "key_prefix": settings.cache_key_prefix,
+            "default_ttl_seconds": settings.cache_default_ttl_seconds,
         }
 
     try:
@@ -267,8 +267,8 @@ def cache_health() -> dict:
         "redis_configured": True,
         "redis_available": redis_available,
         "memory_cache_size": memory_cache_size(),
-        "key_prefix": getattr(settings, "cache_key_prefix", "enterprise-ai-agent"),
-        "default_ttl_seconds": getattr(settings, "cache_default_ttl_seconds", 3600),
+        "key_prefix": settings.cache_key_prefix,
+        "default_ttl_seconds": settings.cache_default_ttl_seconds,
         "error": error,
     }
 
