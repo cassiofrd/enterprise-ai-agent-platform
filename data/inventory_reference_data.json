@@ -1,0 +1,51 @@
+{
+  "products": {
+    "PARAFUSO-M10": {
+      "code": "PARAFUSO-M10",
+      "product_name": "PARAFUSO-M10",
+      "abc_class": "A",
+      "preferred_supplier": "ABC Componentes Industriais",
+      "lead_time_days": 7
+    },
+    "PARAFUSO-M20": {
+      "code": "PARAFUSO-M20",
+      "product_name": "PARAFUSO-M20",
+      "abc_class": "B",
+      "preferred_supplier": "XYZ Metais",
+      "lead_time_days": 14
+    },
+    "PORCA-M10": {
+      "code": "PORCA-M10",
+      "product_name": "PORCA-M10",
+      "abc_class": "C",
+      "preferred_supplier": "DEF Fixadores",
+      "lead_time_days": 30
+    }
+  },
+  "abc_policies": {
+    "A": {
+      "safety_stock_units": 500,
+      "replenishment_frequency": "weekly",
+      "review_frequency": "daily",
+      "critical_level_units": 300
+    },
+    "B": {
+      "safety_stock_units": 200,
+      "replenishment_frequency": "biweekly",
+      "review_frequency": "weekly",
+      "critical_level_units": 100
+    },
+    "C": {
+      "safety_stock_units": 50,
+      "replenishment_frequency": "monthly",
+      "review_frequency": "monthly",
+      "critical_level_units": 20
+    }
+  },
+  "purchasing_policy": {
+    "approval_threshold_brl": 50000,
+    "approval_required_above_threshold": true,
+    "approval_role": "manager",
+    "urgent_orders_without_additional_quote_when_critical": true
+  }
+}

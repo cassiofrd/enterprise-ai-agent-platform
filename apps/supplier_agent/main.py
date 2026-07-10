@@ -3,7 +3,6 @@ from __future__ import annotations
 import json
 import time
 import re
-from pathlib import Path
 
 from fastapi import Depends, FastAPI, HTTPException
 from pydantic import BaseModel
@@ -37,6 +36,7 @@ from shared.azure_search import (
 )
 from shared.llm import get_chat_llm
 from shared.auth import require_auth
+from shared.repositories.supplier_repository import SupplierRepository
 
 
 
@@ -56,19 +56,11 @@ class KnowledgeSearchRequest(BaseModel):
     top: int = 5
 
 
-SUPPLIER_REFERENCE_DATA_PATH = Path(__file__).resolve().parents[2] / "data" / "supplier_reference_data.json"
-
-
-def load_supplier_reference_data() -> dict:
-    with SUPPLIER_REFERENCE_DATA_PATH.open("r", encoding="utf-8") as f:
-        return json.load(f)
-
-
-SUPPLIER_REFERENCE_DATA = load_supplier_reference_data()
+supplier_repository = SupplierRepository()
 
 
 def normalize_supplier_name(name: str) -> str:
-    return " ".join(name.strip().lower().split())
+    return supplier_repository.normalize_supplier_name(name)
 
 
 def find_supplier_in_azure_search(name: str) -> tuple[str, dict] | tuple[None, None]:
@@ -93,38 +85,15 @@ def find_supplier_in_azure_search(name: str) -> tuple[str, dict] | tuple[None, N
 
 
 def find_supplier(name: str) -> tuple[str, dict] | tuple[None, None]:
-    normalized = normalize_supplier_name(name)
-
     azure_name, azure_supplier = find_supplier_in_azure_search(name)
     if azure_supplier:
         return azure_name, azure_supplier
 
-    for supplier_name, supplier in SUPPLIER_REFERENCE_DATA.items():
-        aliases = {
-            normalize_supplier_name(supplier_name),
-            normalize_supplier_name(supplier.get("legal_name", "")),
-        }
-        if normalized in aliases:
-            return supplier_name, supplier
-    return None, None
+    return supplier_repository.find_supplier(name)
 
 
 def supplier_summary(name: str, supplier: dict) -> dict:
-    return {
-        "supplier_name": name,
-        "supplier_id": supplier["supplier_id"],
-        "legal_name": supplier["legal_name"],
-        "city": supplier["city"],
-        "state": supplier["state"],
-        "country": supplier["country"],
-        "rating": supplier["rating"],
-        "risk_level": supplier["risk_level"],
-        "payment_terms": supplier["payment_terms"],
-        "buyer": supplier["buyer"],
-        "average_lead_time_days": supplier["average_lead_time_days"],
-        "products": supplier["products"],
-        "source": supplier.get("source", "structured_supplier_reference_data"),
-    }
+    return supplier_repository.supplier_summary(name, supplier)
 
 
 def log_supplier_api_call(*, endpoint: str, tool_operation: str, status: str, http_status_code: int, start: float, **fields):
@@ -576,7 +545,7 @@ def get_suppliers(_: None = Depends(require_auth)):
     start = time.perf_counter()
     suppliers = [
         supplier_summary(name, supplier)
-        for name, supplier in SUPPLIER_REFERENCE_DATA.items()
+        for name, supplier in supplier_repository.list_suppliers()
     ]
     log_supplier_api_call(
         endpoint="/suppliers",

@@ -49,6 +49,7 @@ from shared.azure_search import (
 )
 from shared.llm import get_chat_llm, get_embeddings
 from shared.auth import require_auth
+from shared.repositories.inventory_repository import InventoryRepository
 
 
 
@@ -72,66 +73,13 @@ class KnowledgeSearchRequest(BaseModel):
 _vector_store = None
 
 
-# Structured inventory reference data exposed as simple REST tool endpoints.
-# These endpoints are designed for OpenAPI-based tool calling platforms such as
-# Azure AI Foundry, Copilot Studio, and other external clients. They do not
-# replace /invoke; they expose specific business capabilities in a predictable
-# format.
-ABC_POLICIES = {
-    "A": {
-        "safety_stock_units": 500,
-        "replenishment_frequency": "weekly",
-        "review_frequency": "daily",
-        "critical_level_units": 300,
-    },
-    "B": {
-        "safety_stock_units": 200,
-        "replenishment_frequency": "biweekly",
-        "review_frequency": "weekly",
-        "critical_level_units": 100,
-    },
-    "C": {
-        "safety_stock_units": 50,
-        "replenishment_frequency": "monthly",
-        "review_frequency": "monthly",
-        "critical_level_units": 20,
-    },
-}
-
-PRODUCT_CATALOG = {
-    "PARAFUSO-M10": {
-        "code": "PARAFUSO-M10",
-        "product_name": "PARAFUSO-M10",
-        "abc_class": "A",
-        "preferred_supplier": "ABC Componentes Industriais",
-        "lead_time_days": 7,
-    },
-    "PARAFUSO-M20": {
-        "code": "PARAFUSO-M20",
-        "product_name": "PARAFUSO-M20",
-        "abc_class": "B",
-        "preferred_supplier": "XYZ Metais",
-        "lead_time_days": 14,
-    },
-    "PORCA-M10": {
-        "code": "PORCA-M10",
-        "product_name": "PORCA-M10",
-        "abc_class": "C",
-        "preferred_supplier": "DEF Fixadores",
-        "lead_time_days": 30,
-    },
-}
-
-PURCHASING_POLICY = {
-    "approval_threshold_brl": 50000,
-    "approval_required_above_threshold": True,
-    "approval_role": "manager",
-    "urgent_orders_without_additional_quote_when_critical": True,
-}
+# Local structured reference data is accessed through a repository so the API
+# layer remains independent from the persistence implementation.
+inventory_repository = InventoryRepository()
 
 
 def normalize_product_code(code: str) -> str:
-    return code.strip().replace("_", "-").upper()
+    return inventory_repository.normalize_product_code(code)
 
 
 def get_product_from_azure_search(code: str) -> dict | None:
@@ -167,7 +115,7 @@ def get_product_or_404(code: str) -> dict:
     if product is not None:
         return product
 
-    product = PRODUCT_CATALOG.get(normalized_code)
+    product = inventory_repository.get_product(normalized_code)
     if product is None:
         raise HTTPException(
             status_code=404,
@@ -204,13 +152,7 @@ def log_openapi_tool_call(
 
 
 def build_product_payload(product: dict) -> dict:
-    abc_class = product["abc_class"]
-    policy = ABC_POLICIES[abc_class]
-    return {
-        **product,
-        "inventory_policy": policy,
-        "source": product.get("source", "structured_inventory_reference_data"),
-    }
+    return inventory_repository.build_product_payload(product)
 
 
 
@@ -1031,7 +973,7 @@ def get_inventory_policy(code: str, _: None = Depends(require_auth)):
     try:
         product = get_product_or_404(code)
         abc_class = product["abc_class"]
-        policy = ABC_POLICIES[abc_class]
+        policy = inventory_repository.get_abc_policy(abc_class)
         payload = {
             "agent": "inventory",
             "product_code": product["code"],
@@ -1076,8 +1018,7 @@ def get_products_by_supplier(supplier_name: str, _: None = Depends(require_auth)
     try:
         products = [
             build_product_payload(product)
-            for product in PRODUCT_CATALOG.values()
-            if product["preferred_supplier"].lower() == normalized_supplier
+            for product in inventory_repository.get_products_by_supplier(supplier_name)
         ]
 
         if not products:
@@ -1128,7 +1069,7 @@ def get_purchasing_policy(_: None = Depends(require_auth)):
 
     payload = {
         "agent": "inventory",
-        "policy": PURCHASING_POLICY,
+        "policy": inventory_repository.get_purchasing_policy(),
         "source": "structured_inventory_reference_data",
     }
 
