@@ -7,10 +7,15 @@ from collections import deque
 from contextlib import contextmanager
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
+from functools import wraps
+from typing import Any, Callable, Iterator, TypeVar
 
 from shared.config import EVENT_LOG_PATH, LOG_DIR
+from shared.metrics import metrics_collector
+from shared.request_context import get_request_context
 
+
+_F = TypeVar("_F", bound=Callable[..., Any])
 
 MODEL_PRICING_USD_PER_1M_TOKENS = {
     "gpt-4o": {"input": 2.50, "output": 10.00},
@@ -49,22 +54,20 @@ def estimate_llm_cost_usd(model: str, input_tokens: int | None, output_tokens: i
 
 def log_event(event_type: str, **fields: Any) -> None:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
-
-    payload = {
-        "ts": time.time(),
-        "timestamp": now_iso(),
-        "event_type": event_type,
-        **fields,
-    }
-
+    context = get_request_context()
+    context_fields = context.to_dict() if context is not None else {}
+    payload = {"ts": time.time(), "timestamp": now_iso(), "event_type": event_type, **context_fields, **fields}
     _IN_MEMORY_EVENTS.append(payload)
-
     if len(_IN_MEMORY_EVENTS) > 1000:
         del _IN_MEMORY_EVENTS[: len(_IN_MEMORY_EVENTS) - 1000]
-
     with EVENT_LOG_PATH.open("a", encoding="utf-8") as f:
         f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
-
+    metrics_collector.increment("events.total")
+    metrics_collector.increment(f"events.{event_type}")
+    status = payload.get("status")
+    if status: metrics_collector.increment(f"status.{status}")
+    latency_ms = payload.get("latency_ms")
+    if latency_ms is not None: metrics_collector.observe_latency(event_type, float(latency_ms))
     print(f"[OBS] {event_type} | {fields}")
 
 
@@ -87,6 +90,16 @@ def observe_duration(event_type: str, **fields: Any) -> Iterator[None]:
             **fields,
         )
         raise
+
+
+def measure_time(event_type: str, **static_fields: Any):
+    def decorator(func: _F) -> _F:
+        @wraps(func)
+        def wrapper(*args: Any, **kwargs: Any):
+            with observe_duration(event_type, function=func.__qualname__, **static_fields):
+                return func(*args, **kwargs)
+        return wrapper  # type: ignore[return-value]
+    return decorator
 
 
 def log_llm_usage(event_type: str, response: Any, trace_id: str, agent: str, model: str) -> None:
@@ -193,6 +206,7 @@ def get_metrics_summary() -> dict[str, Any]:
     trace_ids = sorted({e.get("trace_id") for e in events if e.get("trace_id")})
 
     return {
+        "collector": metrics_collector.snapshot(),
         "total_events": total_events,
         "total_traces": len(trace_ids),
         "total_tokens": total_tokens,

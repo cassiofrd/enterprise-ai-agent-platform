@@ -9,7 +9,7 @@ from urllib.parse import quote
 from typing import Annotated, Literal, Optional, Sequence, TypedDict
 
 import requests
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, Request
 from pydantic import BaseModel
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage
@@ -37,7 +37,11 @@ from shared.observability import (
     get_trace_events,
     get_trace_index,
     get_trace_summary,
+    measure_time,
 )
+
+from shared.metrics import metrics_collector
+from shared.request_context import request_context_scope
 
 
 
@@ -61,6 +65,34 @@ CIRCUIT_BREAKERS = {
 }
 
 app = FastAPI(title="Supervisor Agent API")
+
+
+@app.middleware("http")
+async def request_context_middleware(request: Request, call_next):
+    trace_id = request.headers.get("X-Trace-ID") or new_trace_id()
+    request_id = request.headers.get("X-Request-ID")
+    session_id = request.headers.get("X-Session-ID")
+    with request_context_scope(trace_id=trace_id, request_id=request_id, session_id=session_id, endpoint=request.url.path) as context:
+        started_at = time.perf_counter()
+        metrics_collector.increment("http.requests.total")
+        metrics_collector.increment(f"http.requests.{request.method.lower()}")
+        log_event("http.request.started", method=request.method, path=request.url.path)
+        try:
+            response = await call_next(request)
+        except Exception as exc:
+            latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+            metrics_collector.increment("http.requests.errors")
+            metrics_collector.observe_latency("http.request", latency_ms)
+            log_event("http.request.completed", method=request.method, path=request.url.path, status="error", latency_ms=latency_ms, error_type=type(exc).__name__, error_message=str(exc))
+            raise
+        latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
+        status_name = "success" if response.status_code < 400 else "error"
+        metrics_collector.increment(f"http.responses.{response.status_code}")
+        metrics_collector.observe_latency("http.request", latency_ms)
+        log_event("http.request.completed", method=request.method, path=request.url.path, status=status_name, status_code=response.status_code, latency_ms=latency_ms)
+        response.headers["X-Trace-ID"] = context.trace_id
+        response.headers["X-Request-ID"] = context.request_id
+        return response
 
 llm = get_chat_llm(temperature=0.0)
 
@@ -1068,6 +1100,7 @@ def _answer_supplier_structured(*, question: str, supplier_name: str, trace_id: 
     return answer
 
 
+@measure_time("supervisor.multi_agent.execute")
 def multi_agent_node(state: AgentState):
     """Answer hybrid questions with concurrent structured REST calls.
 
@@ -1313,6 +1346,7 @@ def multi_agent_node(state: AgentState):
     }
 
 
+@measure_time("supervisor.knowledge.build")
 def build_grounded_knowledge_answer(
     *,
     question: str,
@@ -1686,6 +1720,12 @@ def metrics(_: None = Depends(require_auth)):
     }
 
 
+@app.get("/health/observability")
+def observability_health():
+    snapshot = metrics_collector.snapshot()
+    return {"status": "ok", "component": "observability", "event_buffer_size": len(get_recent_events(limit=1000)), "metrics": snapshot}
+
+
 @app.get("/conversations/{session_id}")
 def conversation_history(session_id: str, limit: int = 10, _: None = Depends(require_auth)):
     """Return recent turns for one session for audit/debugging."""
@@ -1717,6 +1757,7 @@ def health():
 
 
 @app.post("/chat", response_model=ChatResponse)
+@measure_time("api.chat.handler")
 def chat(request: ChatRequest, _: None = Depends(require_auth)):
     trace_id = new_trace_id()
 
@@ -1800,6 +1841,7 @@ def chat(request: ChatRequest, _: None = Depends(require_auth)):
 
 
 @app.post("/copilot", response_model=CopilotResponse)
+@measure_time("api.copilot.handler")
 def copilot(request: CopilotRequest, _: None = Depends(require_auth)):
     operation = {
         "operation_id": "COPILOT-REQUEST",
