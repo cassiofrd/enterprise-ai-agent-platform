@@ -37,6 +37,7 @@ from shared.azure_search import (
 from shared.llm import get_chat_llm
 from shared.auth import require_auth
 from shared.repositories.supplier_repository import SupplierRepository
+from shared.services.supplier_service import SupplierNotFoundError, SupplierService
 
 
 
@@ -59,10 +60,6 @@ class KnowledgeSearchRequest(BaseModel):
 supplier_repository = SupplierRepository()
 
 
-def normalize_supplier_name(name: str) -> str:
-    return supplier_repository.normalize_supplier_name(name)
-
-
 def find_supplier_in_azure_search(name: str) -> tuple[str, dict] | tuple[None, None]:
     """Return supplier data from Azure AI Search when configured.
 
@@ -70,7 +67,7 @@ def find_supplier_in_azure_search(name: str) -> tuple[str, dict] | tuple[None, N
     same REST endpoints can be backed by indexed supplier profiles, contracts,
     and performance documents.
     """
-    normalized = normalize_supplier_name(name).upper()
+    normalized = supplier_repository.normalize_supplier_name(name).upper()
     supplier = lookup_structured_entity(
         entity_type="supplier",
         entity_id=normalized,
@@ -84,16 +81,10 @@ def find_supplier_in_azure_search(name: str) -> tuple[str, dict] | tuple[None, N
     return canonical_name, supplier
 
 
-def find_supplier(name: str) -> tuple[str, dict] | tuple[None, None]:
-    azure_name, azure_supplier = find_supplier_in_azure_search(name)
-    if azure_supplier:
-        return azure_name, azure_supplier
-
-    return supplier_repository.find_supplier(name)
-
-
-def supplier_summary(name: str, supplier: dict) -> dict:
-    return supplier_repository.supplier_summary(name, supplier)
+supplier_service = SupplierService(
+    repository=supplier_repository,
+    azure_supplier_lookup=find_supplier_in_azure_search,
+)
 
 
 def log_supplier_api_call(*, endpoint: str, tool_operation: str, status: str, http_status_code: int, start: float, **fields):
@@ -543,10 +534,7 @@ def invoke_supplier_agent(request: SupplierRequest, _: None = Depends(require_au
 @app.get("/suppliers")
 def get_suppliers(_: None = Depends(require_auth)):
     start = time.perf_counter()
-    suppliers = [
-        supplier_summary(name, supplier)
-        for name, supplier in supplier_repository.list_suppliers()
-    ]
+    suppliers = supplier_service.list_supplier_summaries()
     log_supplier_api_call(
         endpoint="/suppliers",
         tool_operation="listSuppliers",
@@ -564,8 +552,9 @@ def get_suppliers(_: None = Depends(require_auth)):
 @app.get("/suppliers/{supplier_name}")
 def get_supplier(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
-    canonical_name, supplier = find_supplier(supplier_name)
-    if not supplier:
+    try:
+        payload = supplier_service.get_supplier_summary(supplier_name)
+    except SupplierNotFoundError as exc:
         log_supplier_api_call(
             endpoint="/suppliers/{supplier_name}",
             tool_operation="getSupplier",
@@ -573,11 +562,11 @@ def get_supplier(supplier_name: str, _: None = Depends(require_auth)):
             http_status_code=404,
             start=start,
             supplier_name=supplier_name,
-            error_message=f"Supplier not found: {supplier_name}",
+            error_message=str(exc),
         )
-        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    payload = supplier_summary(canonical_name, supplier)
+    canonical_name = payload["supplier_name"]
     log_supplier_api_call(
         endpoint="/suppliers/{supplier_name}",
         tool_operation="getSupplier",
@@ -585,7 +574,7 @@ def get_supplier(supplier_name: str, _: None = Depends(require_auth)):
         http_status_code=200,
         start=start,
         supplier_name=canonical_name,
-        supplier_id=supplier["supplier_id"],
+        supplier_id=payload["supplier_id"],
     )
     return {
         "agent": "supplier",
@@ -596,8 +585,9 @@ def get_supplier(supplier_name: str, _: None = Depends(require_auth)):
 @app.get("/suppliers/{supplier_name}/products")
 def get_supplier_products(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
-    canonical_name, supplier = find_supplier(supplier_name)
-    if not supplier:
+    try:
+        result = supplier_service.get_supplier_products(supplier_name)
+    except SupplierNotFoundError as exc:
         log_supplier_api_call(
             endpoint="/suppliers/{supplier_name}/products",
             tool_operation="getSupplierProducts",
@@ -605,11 +595,12 @@ def get_supplier_products(supplier_name: str, _: None = Depends(require_auth)):
             http_status_code=404,
             start=start,
             supplier_name=supplier_name,
-            error_message=f"Supplier not found: {supplier_name}",
+            error_message=str(exc),
         )
-        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    products = supplier["products"]
+    canonical_name = result["supplier_name"]
+    products = result["products"]
     log_supplier_api_call(
         endpoint="/suppliers/{supplier_name}/products",
         tool_operation="getSupplierProducts",
@@ -617,7 +608,7 @@ def get_supplier_products(supplier_name: str, _: None = Depends(require_auth)):
         http_status_code=200,
         start=start,
         supplier_name=canonical_name,
-        supplier_id=supplier["supplier_id"],
+        supplier_id=result["supplier_id"],
         result_count=len(products),
     )
     return {
@@ -631,8 +622,9 @@ def get_supplier_products(supplier_name: str, _: None = Depends(require_auth)):
 @app.get("/suppliers/{supplier_name}/contracts")
 def get_supplier_contracts(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
-    canonical_name, supplier = find_supplier(supplier_name)
-    if not supplier:
+    try:
+        result = supplier_service.get_supplier_contracts(supplier_name)
+    except SupplierNotFoundError as exc:
         log_supplier_api_call(
             endpoint="/suppliers/{supplier_name}/contracts",
             tool_operation="getSupplierContracts",
@@ -640,11 +632,12 @@ def get_supplier_contracts(supplier_name: str, _: None = Depends(require_auth)):
             http_status_code=404,
             start=start,
             supplier_name=supplier_name,
-            error_message=f"Supplier not found: {supplier_name}",
+            error_message=str(exc),
         )
-        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    contracts = supplier["contracts"]
+    canonical_name = result["supplier_name"]
+    contracts = result["contracts"]
     log_supplier_api_call(
         endpoint="/suppliers/{supplier_name}/contracts",
         tool_operation="getSupplierContracts",
@@ -652,7 +645,7 @@ def get_supplier_contracts(supplier_name: str, _: None = Depends(require_auth)):
         http_status_code=200,
         start=start,
         supplier_name=canonical_name,
-        supplier_id=supplier["supplier_id"],
+        supplier_id=result["supplier_id"],
         result_count=len(contracts),
     )
     return {
@@ -666,8 +659,9 @@ def get_supplier_contracts(supplier_name: str, _: None = Depends(require_auth)):
 @app.get("/suppliers/{supplier_name}/performance")
 def get_supplier_performance(supplier_name: str, _: None = Depends(require_auth)):
     start = time.perf_counter()
-    canonical_name, supplier = find_supplier(supplier_name)
-    if not supplier:
+    try:
+        result = supplier_service.get_supplier_performance(supplier_name)
+    except SupplierNotFoundError as exc:
         log_supplier_api_call(
             endpoint="/suppliers/{supplier_name}/performance",
             tool_operation="getSupplierPerformance",
@@ -675,17 +669,12 @@ def get_supplier_performance(supplier_name: str, _: None = Depends(require_auth)
             http_status_code=404,
             start=start,
             supplier_name=supplier_name,
-            error_message=f"Supplier not found: {supplier_name}",
+            error_message=str(exc),
         )
-        raise HTTPException(status_code=404, detail=f"Supplier not found: {supplier_name}")
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
-    performance = {
-        "rating": supplier["rating"],
-        "risk_level": supplier["risk_level"],
-        "sla_on_time_delivery_percent": supplier["sla_on_time_delivery_percent"],
-        "quality_score": supplier["quality_score"],
-        "average_lead_time_days": supplier["average_lead_time_days"],
-    }
+    canonical_name = result["supplier_name"]
+    performance = result["performance"]
     log_supplier_api_call(
         endpoint="/suppliers/{supplier_name}/performance",
         tool_operation="getSupplierPerformance",
@@ -693,7 +682,7 @@ def get_supplier_performance(supplier_name: str, _: None = Depends(require_auth)
         http_status_code=200,
         start=start,
         supplier_name=canonical_name,
-        supplier_id=supplier["supplier_id"],
+        supplier_id=result["supplier_id"],
     )
     return {
         "agent": "supplier",

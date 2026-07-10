@@ -50,6 +50,7 @@ from shared.azure_search import (
 from shared.llm import get_chat_llm, get_embeddings
 from shared.auth import require_auth
 from shared.repositories.inventory_repository import InventoryRepository
+from shared.services.inventory_service import InventoryNotFoundError, InventoryService
 
 
 
@@ -73,13 +74,9 @@ class KnowledgeSearchRequest(BaseModel):
 _vector_store = None
 
 
-# Local structured reference data is accessed through a repository so the API
-# layer remains independent from the persistence implementation.
+# Structured business operations go through the service layer. The service
+# decides between Azure AI Search and the local repository fallback.
 inventory_repository = InventoryRepository()
-
-
-def normalize_product_code(code: str) -> str:
-    return inventory_repository.normalize_product_code(code)
 
 
 def get_product_from_azure_search(code: str) -> dict | None:
@@ -89,7 +86,7 @@ def get_product_from_azure_search(code: str) -> dict | None:
     searchable corporate knowledge layer. The local PRODUCT_CATALOG remains the
     deterministic fallback for local development and automated tests.
     """
-    normalized_code = normalize_product_code(code)
+    normalized_code = inventory_service.normalize_product_code(code)
     product = lookup_structured_entity(
         entity_type="product",
         entity_id=normalized_code,
@@ -108,21 +105,10 @@ def get_product_from_azure_search(code: str) -> dict | None:
     }
 
 
-def get_product_or_404(code: str) -> dict:
-    normalized_code = normalize_product_code(code)
-
-    product = get_product_from_azure_search(normalized_code)
-    if product is not None:
-        return product
-
-    product = inventory_repository.get_product(normalized_code)
-    if product is None:
-        raise HTTPException(
-            status_code=404,
-            detail=f"Product not found: {normalized_code}",
-        )
-    return product
-
+inventory_service = InventoryService(
+    repository=inventory_repository,
+    azure_product_lookup=get_product_from_azure_search,
+)
 
 
 def log_openapi_tool_call(
@@ -149,11 +135,6 @@ def log_openapi_tool_call(
         latency_ms=round(latency_ms, 2),
         **fields,
     )
-
-
-def build_product_payload(product: dict) -> dict:
-    return inventory_repository.build_product_payload(product)
-
 
 
 def normalize_rag_cache_key(query: str) -> str:
@@ -924,13 +905,13 @@ def get_product(code: str, _: None = Depends(require_auth)):
     """
     endpoint = "/products/{code}"
     start = time.perf_counter()
-    normalized_code = normalize_product_code(code)
+    normalized_code = inventory_service.normalize_product_code(code)
 
     try:
-        product = get_product_or_404(code)
+        product = inventory_service.get_product_payload(code)
         payload = {
             "agent": "inventory",
-            "product": build_product_payload(product),
+            "product": product,
         }
 
         latency_ms = (time.perf_counter() - start) * 1000
@@ -944,18 +925,18 @@ def get_product(code: str, _: None = Depends(require_auth)):
         )
 
         return payload
-    except HTTPException as exc:
+    except InventoryNotFoundError as exc:
         latency_ms = (time.perf_counter() - start) * 1000
         log_openapi_tool_call(
             endpoint=endpoint,
             status="error",
-            http_status_code=exc.status_code,
+            http_status_code=404,
             latency_ms=latency_ms,
             product_code=normalized_code,
             tool_operation="getProduct",
-            error_message=str(exc.detail),
+            error_message=str(exc),
         )
-        raise
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/inventory-policy/{code}")
@@ -968,18 +949,13 @@ def get_inventory_policy(code: str, _: None = Depends(require_auth)):
     """
     endpoint = "/inventory-policy/{code}"
     start = time.perf_counter()
-    normalized_code = normalize_product_code(code)
+    normalized_code = inventory_service.normalize_product_code(code)
 
     try:
-        product = get_product_or_404(code)
-        abc_class = product["abc_class"]
-        policy = inventory_repository.get_abc_policy(abc_class)
+        policy_result = inventory_service.get_inventory_policy(code)
         payload = {
             "agent": "inventory",
-            "product_code": product["code"],
-            "abc_class": abc_class,
-            "policy": policy,
-            "source": product.get("source", "structured_inventory_reference_data"),
+            **policy_result,
         }
 
         latency_ms = (time.perf_counter() - start) * 1000
@@ -988,24 +964,24 @@ def get_inventory_policy(code: str, _: None = Depends(require_auth)):
             status="success",
             http_status_code=200,
             latency_ms=latency_ms,
-            product_code=product["code"],
-            abc_class=abc_class,
+            product_code=policy_result["product_code"],
+            abc_class=policy_result["abc_class"],
             tool_operation="getInventoryPolicy",
         )
 
         return payload
-    except HTTPException as exc:
+    except InventoryNotFoundError as exc:
         latency_ms = (time.perf_counter() - start) * 1000
         log_openapi_tool_call(
             endpoint=endpoint,
             status="error",
-            http_status_code=exc.status_code,
+            http_status_code=404,
             latency_ms=latency_ms,
             product_code=normalized_code,
             tool_operation="getInventoryPolicy",
-            error_message=str(exc.detail),
+            error_message=str(exc),
         )
-        raise
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/suppliers/{supplier_name}/products")
@@ -1013,19 +989,8 @@ def get_products_by_supplier(supplier_name: str, _: None = Depends(require_auth)
     """Return products associated with a preferred supplier."""
     endpoint = "/suppliers/{supplier_name}/products"
     start = time.perf_counter()
-    normalized_supplier = supplier_name.strip().lower()
-
     try:
-        products = [
-            build_product_payload(product)
-            for product in inventory_repository.get_products_by_supplier(supplier_name)
-        ]
-
-        if not products:
-            raise HTTPException(
-                status_code=404,
-                detail=f"No products found for supplier: {supplier_name}",
-            )
+        products = inventory_service.get_products_by_supplier(supplier_name)
 
         payload = {
             "agent": "inventory",
@@ -1046,19 +1011,19 @@ def get_products_by_supplier(supplier_name: str, _: None = Depends(require_auth)
         )
 
         return payload
-    except HTTPException as exc:
+    except InventoryNotFoundError as exc:
         latency_ms = (time.perf_counter() - start) * 1000
         log_openapi_tool_call(
             endpoint=endpoint,
             status="error",
-            http_status_code=exc.status_code,
+            http_status_code=404,
             latency_ms=latency_ms,
             supplier_name=supplier_name,
             result_count=0,
             tool_operation="getProductsBySupplier",
-            error_message=str(exc.detail),
+            error_message=str(exc),
         )
-        raise
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
 
 
 @app.get("/purchasing-policy")
@@ -1069,7 +1034,7 @@ def get_purchasing_policy(_: None = Depends(require_auth)):
 
     payload = {
         "agent": "inventory",
-        "policy": inventory_repository.get_purchasing_policy(),
+        "policy": inventory_service.get_purchasing_policy(),
         "source": "structured_inventory_reference_data",
     }
 
