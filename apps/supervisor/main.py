@@ -38,10 +38,17 @@ from shared.observability import (
     get_trace_index,
     get_trace_summary,
     measure_time,
+    get_cost_summary,
+    get_agent_metrics_summary,
 )
 
 from shared.metrics import metrics_collector
-from shared.request_context import request_context_scope
+from shared.request_context import (
+    bind_request_context,
+    get_request_context,
+    request_context_scope,
+)
+from shared.tracing import start_span
 
 
 
@@ -78,7 +85,16 @@ async def request_context_middleware(request: Request, call_next):
         metrics_collector.increment(f"http.requests.{request.method.lower()}")
         log_event("http.request.started", method=request.method, path=request.url.path)
         try:
-            response = await call_next(request)
+            with start_span(
+                "http.request",
+                trace_id=context.trace_id,
+                attributes={
+                    "http.method": request.method,
+                    "http.route": request.url.path,
+                    "service.name": settings.otel_service_name,
+                },
+            ):
+                response = await call_next(request)
         except Exception as exc:
             latency_ms = round((time.perf_counter() - started_at) * 1000, 2)
             metrics_collector.increment("http.requests.errors")
@@ -1720,10 +1736,36 @@ def metrics(_: None = Depends(require_auth)):
     }
 
 
+@app.get("/metrics/costs")
+def metrics_costs(_: None = Depends(require_auth)):
+    return {
+        "agent": "supervisor",
+        "costs": get_cost_summary(),
+    }
+
+
+@app.get("/metrics/agents")
+def metrics_agents(_: None = Depends(require_auth)):
+    return {
+        "agent": "supervisor",
+        "agents": get_agent_metrics_summary(),
+    }
+
+
 @app.get("/health/observability")
 def observability_health():
     snapshot = metrics_collector.snapshot()
-    return {"status": "ok", "component": "observability", "event_buffer_size": len(get_recent_events(limit=1000)), "metrics": snapshot}
+    return {
+        "status": "ok",
+        "component": "observability",
+        "service_name": settings.otel_service_name,
+        "otel_enabled": settings.otel_enabled,
+        "application_insights_configured": bool(
+            settings.applicationinsights_connection_string
+        ),
+        "event_buffer_size": len(get_recent_events(limit=1000)),
+        "metrics": snapshot,
+    }
 
 
 @app.get("/conversations/{session_id}")
@@ -1759,7 +1801,8 @@ def health():
 @app.post("/chat", response_model=ChatResponse)
 @measure_time("api.chat.handler")
 def chat(request: ChatRequest, _: None = Depends(require_auth)):
-    trace_id = new_trace_id()
+    active_context = get_request_context()
+    trace_id = active_context.trace_id if active_context else new_trace_id()
 
     operation = request.operation or {
         "operation_id": "OP-12345",
@@ -1768,7 +1811,30 @@ def chat(request: ChatRequest, _: None = Depends(require_auth)):
         "location": "Warehouse A",
     }
 
-    session_id = request.session_id or "default"
+    session_id = request.session_id or (
+        active_context.session_id if active_context else None
+    ) or "default"
+
+    with bind_request_context(
+        trace_id=trace_id,
+        session_id=session_id,
+        endpoint="/chat",
+    ):
+        return _execute_chat_request(
+            request=request,
+            operation=operation,
+            trace_id=trace_id,
+            session_id=session_id,
+        )
+
+
+def _execute_chat_request(
+    *,
+    request: ChatRequest,
+    operation: dict,
+    trace_id: str,
+    session_id: str,
+) -> ChatResponse:
     conversation_context = format_conversation_context(session_id)
     log_event(
         "conversation.context.loaded",

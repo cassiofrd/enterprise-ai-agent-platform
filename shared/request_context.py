@@ -51,3 +51,32 @@ def request_context_scope(*, trace_id: str, request_id: str | None = None, sessi
         yield context
     finally:
         reset_request_context(token)
+
+
+@contextmanager
+def bind_request_context(
+    *,
+    trace_id: str | None = None,
+    request_id: str | None = None,
+    session_id: str | None = None,
+    endpoint: str | None = None,
+) -> Iterator[RequestContext]:
+    """Temporarily enrich or override the active request context."""
+
+    current = get_request_context()
+    context = RequestContext(
+        trace_id=trace_id or (current.trace_id if current else str(uuid.uuid4())),
+        request_id=request_id or (current.request_id if current else new_request_id()),
+        session_id=session_id if session_id is not None else (current.session_id if current else None),
+        endpoint=endpoint if endpoint is not None else (current.endpoint if current else None),
+        started_at_monotonic=(
+            current.started_at_monotonic
+            if current is not None
+            else time.perf_counter()
+        ),
+    )
+    token = set_request_context(context)
+    try:
+        yield context
+    finally:
+        reset_request_context(token)

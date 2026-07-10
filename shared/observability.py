@@ -13,13 +13,45 @@ from typing import Any, Callable, Iterator, TypeVar
 from shared.config import EVENT_LOG_PATH, LOG_DIR
 from shared.metrics import metrics_collector
 from shared.request_context import get_request_context
+from shared.settings import settings
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
 
-MODEL_PRICING_USD_PER_1M_TOKENS = {
+DEFAULT_MODEL_PRICING_USD_PER_1M_TOKENS = {
+    # Approximate defaults used only for local estimates. Override through
+    # LLM_PRICING_USD_PER_1M_JSON when precise contract pricing is required.
     "gpt-4o": {"input": 2.50, "output": 10.00},
+    "gpt-4o-mini": {"input": 0.15, "output": 0.60},
 }
+
+
+def _load_model_pricing() -> dict[str, dict[str, float]]:
+    raw = getattr(settings, "llm_pricing_usd_per_1m_json", None)
+    if not raw:
+        return DEFAULT_MODEL_PRICING_USD_PER_1M_TOKENS
+
+    try:
+        parsed = json.loads(raw)
+        if not isinstance(parsed, dict):
+            raise ValueError("Pricing JSON must be an object.")
+
+        pricing: dict[str, dict[str, float]] = {}
+        for model, values in parsed.items():
+            if not isinstance(values, dict):
+                continue
+            if "input" not in values or "output" not in values:
+                continue
+            pricing[str(model)] = {
+                "input": float(values["input"]),
+                "output": float(values["output"]),
+            }
+        return pricing or DEFAULT_MODEL_PRICING_USD_PER_1M_TOKENS
+    except (TypeError, ValueError, json.JSONDecodeError):
+        return DEFAULT_MODEL_PRICING_USD_PER_1M_TOKENS
+
+
+MODEL_PRICING_USD_PER_1M_TOKENS = _load_model_pricing()
 
 _IN_MEMORY_EVENTS: list[dict[str, Any]] = []
 
@@ -64,10 +96,29 @@ def log_event(event_type: str, **fields: Any) -> None:
         f.write(json.dumps(payload, ensure_ascii=False, default=str) + "\n")
     metrics_collector.increment("events.total")
     metrics_collector.increment(f"events.{event_type}")
+
+    agent = payload.get("agent") or payload.get("target_agent") or payload.get("target")
+    labels = {"agent": agent} if agent else None
+
     status = payload.get("status")
-    if status: metrics_collector.increment(f"status.{status}")
+    if status:
+        metrics_collector.increment(f"status.{status}", labels=labels)
+    if status == "error" or event_type.endswith(".error") or ".error." in event_type:
+        metrics_collector.increment("errors.total", labels=labels)
+
     latency_ms = payload.get("latency_ms")
-    if latency_ms is not None: metrics_collector.observe_latency(event_type, float(latency_ms))
+    if latency_ms is not None:
+        metrics_collector.observe_latency(event_type, float(latency_ms), labels=labels)
+
+    if event_type.endswith("retry_scheduled"):
+        metrics_collector.increment("retries.total", labels=labels)
+    if event_type == "circuit_breaker.opened":
+        metrics_collector.increment("circuit_breaker.opens", labels=labels)
+    if event_type in {"cache.hit", "rag.cache.hit"}:
+        metrics_collector.increment("cache.hits", labels=labels)
+    if event_type in {"cache.miss", "rag.cache.miss"}:
+        metrics_collector.increment("cache.misses", labels=labels)
+
     print(f"[OBS] {event_type} | {fields}")
 
 
@@ -125,6 +176,18 @@ def log_llm_usage(event_type: str, response: Any, trace_id: str, agent: str, mod
         total_tokens=total_tokens,
         **cost,
     )
+
+    labels = {"agent": agent, "model": model}
+    metrics_collector.increment("llm.calls", labels=labels)
+    if input_tokens is not None:
+        metrics_collector.increment("llm.input_tokens", input_tokens, labels=labels)
+    if output_tokens is not None:
+        metrics_collector.increment("llm.output_tokens", output_tokens, labels=labels)
+    if total_tokens is not None:
+        metrics_collector.increment("llm.total_tokens", total_tokens, labels=labels)
+    total_cost = cost.get("estimated_total_cost_usd")
+    if total_cost is not None:
+        metrics_collector.increment("llm.estimated_cost_usd", total_cost, labels=labels)
 
 
 def _safe_event_key(event: dict[str, Any]) -> tuple:
@@ -217,6 +280,150 @@ def get_metrics_summary() -> dict[str, Any]:
         "avg_latency_ms": avg_latency_ms,
         "recent_trace_ids": trace_ids[-10:],
     }
+
+
+def _aggregate_llm_events(
+    events: list[dict[str, Any]],
+    group_field: str,
+) -> dict[str, dict[str, Any]]:
+    grouped: dict[str, dict[str, Any]] = {}
+
+    for event in events:
+        if event.get("total_tokens") is None and "llm" not in str(event.get("event_type", "")):
+            continue
+
+        group_value = event.get(group_field) or "unknown"
+        key = str(group_value)
+        row = grouped.setdefault(
+            key,
+            {
+                "llm_calls": 0,
+                "input_tokens": 0,
+                "output_tokens": 0,
+                "total_tokens": 0,
+                "estimated_total_cost_usd": 0.0,
+            },
+        )
+        row["llm_calls"] += 1
+        row["input_tokens"] += event.get("input_tokens") or 0
+        row["output_tokens"] += event.get("output_tokens") or 0
+        row["total_tokens"] += event.get("total_tokens") or 0
+        row["estimated_total_cost_usd"] += (
+            event.get("estimated_total_cost_usd") or 0
+        )
+
+    for row in grouped.values():
+        row["estimated_total_cost_usd"] = round(
+            row["estimated_total_cost_usd"],
+            8,
+        )
+
+    return dict(sorted(grouped.items()))
+
+
+def get_cost_summary(limit: int = 5000) -> dict[str, Any]:
+    events = _combined_events(limit=limit)
+    llm_events = [
+        event
+        for event in events
+        if event.get("total_tokens") is not None
+        or "llm" in str(event.get("event_type", ""))
+    ]
+
+    return {
+        "pricing_source": (
+            "environment"
+            if getattr(settings, "llm_pricing_usd_per_1m_json", None)
+            else "approximate_defaults"
+        ),
+        "pricing_usd_per_1m_tokens": MODEL_PRICING_USD_PER_1M_TOKENS,
+        "total": {
+            "llm_calls": len(llm_events),
+            "input_tokens": sum(event.get("input_tokens") or 0 for event in llm_events),
+            "output_tokens": sum(event.get("output_tokens") or 0 for event in llm_events),
+            "total_tokens": sum(event.get("total_tokens") or 0 for event in llm_events),
+            "estimated_total_cost_usd": round(
+                sum(event.get("estimated_total_cost_usd") or 0 for event in llm_events),
+                8,
+            ),
+        },
+        "by_agent": _aggregate_llm_events(llm_events, "agent"),
+        "by_session": _aggregate_llm_events(llm_events, "session_id"),
+        "by_trace": _aggregate_llm_events(llm_events, "trace_id"),
+        "by_model": _aggregate_llm_events(llm_events, "model"),
+    }
+
+
+def get_agent_metrics_summary(limit: int = 5000) -> dict[str, Any]:
+    events = _combined_events(limit=limit)
+    agents: dict[str, dict[str, Any]] = {}
+
+    for event in events:
+        agent = event.get("agent") or event.get("target_agent") or event.get("target")
+        if not agent:
+            continue
+
+        key = str(agent)
+        row = agents.setdefault(
+            key,
+            {
+                "events": 0,
+                "errors": 0,
+                "retries": 0,
+                "circuit_breaker_opens": 0,
+                "cache_hits": 0,
+                "cache_misses": 0,
+                "llm_calls": 0,
+                "total_tokens": 0,
+                "estimated_total_cost_usd": 0.0,
+                "_latency_total": 0.0,
+                "_latency_count": 0,
+            },
+        )
+        row["events"] += 1
+
+        event_type = str(event.get("event_type", ""))
+        status = event.get("status")
+        if status == "error" or event_type.endswith(".error") or ".error." in event_type:
+            row["errors"] += 1
+        if event_type.endswith("retry_scheduled"):
+            row["retries"] += 1
+        if event_type == "circuit_breaker.opened":
+            row["circuit_breaker_opens"] += 1
+        if event_type in {"cache.hit", "rag.cache.hit"}:
+            row["cache_hits"] += 1
+        if event_type in {"cache.miss", "rag.cache.miss"}:
+            row["cache_misses"] += 1
+        if event.get("total_tokens") is not None or "llm" in event_type:
+            row["llm_calls"] += 1
+            row["total_tokens"] += event.get("total_tokens") or 0
+            row["estimated_total_cost_usd"] += (
+                event.get("estimated_total_cost_usd") or 0
+            )
+        if event.get("latency_ms") is not None:
+            row["_latency_total"] += float(event["latency_ms"])
+            row["_latency_count"] += 1
+
+    for row in agents.values():
+        latency_count = row.pop("_latency_count")
+        latency_total = row.pop("_latency_total")
+        row["avg_latency_ms"] = (
+            round(latency_total / latency_count, 2)
+            if latency_count
+            else None
+        )
+        row["estimated_total_cost_usd"] = round(
+            row["estimated_total_cost_usd"],
+            8,
+        )
+        cache_total = row["cache_hits"] + row["cache_misses"]
+        row["cache_hit_rate_percent"] = (
+            round((row["cache_hits"] / cache_total) * 100, 2)
+            if cache_total
+            else None
+        )
+
+    return dict(sorted(agents.items()))
 
 
 def get_trace_events(trace_id: str, limit: int = 500) -> list[dict[str, Any]]:

@@ -61,6 +61,10 @@ class AppSettings:
 
     # Observability
     streamlit_observability_log: str | None
+    otel_service_name: str
+    otel_enabled: bool
+    applicationinsights_connection_string: str | None
+    llm_pricing_usd_per_1m_json: str | None
 
 
 def _get_int(name: str, default: int, minimum: int = 1) -> int:
@@ -100,6 +104,19 @@ def _get_choice(name: str, default: str, allowed: set[str]) -> str:
         allowed_values = ", ".join(sorted(allowed))
         raise ValueError(f"{name} must be one of: {allowed_values}.")
     return value
+
+
+def _get_bool(name: str, default: bool = False) -> bool:
+    raw_value = security.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+
+    normalized = raw_value.strip().lower()
+    if normalized in {"1", "true", "yes", "on"}:
+        return True
+    if normalized in {"0", "false", "no", "off"}:
+        return False
+    raise ValueError(f"{name} must be a boolean value.")
 
 
 def load_settings() -> AppSettings:
@@ -181,6 +198,17 @@ def load_settings() -> AppSettings:
         ),
 
         streamlit_observability_log=security.get("STREAMLIT_OBSERVABILITY_LOG"),
+        otel_service_name=security.get(
+            "OTEL_SERVICE_NAME",
+            "enterprise-ai-agent-supervisor",
+        ) or "enterprise-ai-agent-supervisor",
+        otel_enabled=_get_bool("OTEL_ENABLED", default=False),
+        applicationinsights_connection_string=security.get(
+            "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        ),
+        llm_pricing_usd_per_1m_json=security.get(
+            "LLM_PRICING_USD_PER_1M_JSON"
+        ),
     )
 
 
