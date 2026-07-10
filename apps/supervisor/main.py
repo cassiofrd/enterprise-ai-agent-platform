@@ -16,6 +16,7 @@ from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, System
 from langgraph.graph import END, StateGraph
 
 from shared.settings import settings
+from shared.circuit_breaker import CircuitBreaker, CircuitBreakerOpenError
 from shared.llm import get_chat_llm
 from shared.azure_search import answer_from_knowledge, azure_search_status
 from shared.auth import require_auth
@@ -43,6 +44,21 @@ from shared.observability import (
 INVENTORY_AGENT_URL = settings.inventory_agent_url or "http://localhost:8001/invoke"
 SUPPLIER_AGENT_URL = settings.supplier_agent_url or "http://localhost:8002/invoke"
 ACTIVE_CHAT_MODEL = settings.active_chat_model or "gpt-4o-mini"
+A2A_MAX_ATTEMPTS = settings.a2a_max_attempts
+A2A_RETRY_BACKOFF_SECONDS = settings.a2a_retry_backoff_seconds
+
+CIRCUIT_BREAKERS = {
+    "inventory": CircuitBreaker(
+        name="inventory",
+        failure_threshold=settings.circuit_breaker_failure_threshold,
+        recovery_timeout_seconds=settings.circuit_breaker_recovery_timeout_seconds,
+    ),
+    "supplier": CircuitBreaker(
+        name="supplier",
+        failure_threshold=settings.circuit_breaker_failure_threshold,
+        recovery_timeout_seconds=settings.circuit_breaker_recovery_timeout_seconds,
+    ),
+}
 
 app = FastAPI(title="Supervisor Agent API")
 
@@ -190,6 +206,109 @@ def supervisor_node(state: AgentState):
     }
 
 
+
+def _breaker_for(target_agent: str) -> CircuitBreaker:
+    try:
+        return CIRCUIT_BREAKERS[target_agent]
+    except KeyError as exc:
+        raise ValueError(f"Unknown circuit-breaker target: {target_agent}") from exc
+
+
+def _is_transient_request_exception(
+    exc: requests.exceptions.RequestException,
+) -> bool:
+    response = getattr(exc, "response", None)
+    if response is None:
+        return True
+
+    status_code = response.status_code
+    return status_code == 429 or status_code >= 500
+
+
+def _retry_delay_seconds(attempt: int) -> float:
+    if A2A_RETRY_BACKOFF_SECONDS <= 0:
+        return 0.0
+    return A2A_RETRY_BACKOFF_SECONDS * (2 ** max(0, attempt - 1))
+
+
+def _log_breaker_snapshot(
+    *,
+    event_name: str,
+    target_agent: str,
+    trace_id: str,
+    **fields,
+) -> None:
+    snapshot = _breaker_for(target_agent).snapshot()
+    log_event(
+        event_name,
+        trace_id=trace_id,
+        target_agent=target_agent,
+        circuit_state=snapshot.state,
+        failure_count=snapshot.failure_count,
+        failure_threshold=snapshot.failure_threshold,
+        retry_after_seconds=round(snapshot.retry_after_seconds, 3),
+        **fields,
+    )
+
+
+def _allow_service_call(*, target_agent: str, trace_id: str) -> CircuitBreaker:
+    breaker = _breaker_for(target_agent)
+    try:
+        breaker.before_call()
+    except CircuitBreakerOpenError as exc:
+        _log_breaker_snapshot(
+            event_name="circuit_breaker.call_blocked",
+            target_agent=target_agent,
+            trace_id=trace_id,
+            error_message=str(exc),
+        )
+        raise
+    return breaker
+
+
+def _record_service_success(
+    *,
+    breaker: CircuitBreaker,
+    target_agent: str,
+    trace_id: str,
+) -> None:
+    previous_state = breaker.snapshot().state
+    breaker.record_success()
+    _log_breaker_snapshot(
+        event_name=(
+            "circuit_breaker.closed"
+            if previous_state != "closed"
+            else "circuit_breaker.success"
+        ),
+        target_agent=target_agent,
+        trace_id=trace_id,
+        previous_state=previous_state,
+    )
+
+
+def _record_service_failure(
+    *,
+    breaker: CircuitBreaker,
+    target_agent: str,
+    trace_id: str,
+    exc: Exception,
+) -> None:
+    previous_state = breaker.snapshot().state
+    breaker.record_failure()
+    current_state = breaker.snapshot().state
+    _log_breaker_snapshot(
+        event_name=(
+            "circuit_breaker.opened"
+            if current_state == "open" and previous_state != "open"
+            else "circuit_breaker.failure"
+        ),
+        target_agent=target_agent,
+        trace_id=trace_id,
+        previous_state=previous_state,
+        error_type=type(exc).__name__,
+        error_message=str(exc),
+    )
+
 def build_a2a_payload(state: AgentState, trace_id: str) -> dict:
     return {
         "operation": state.get("operation", {}),
@@ -211,6 +330,10 @@ def call_specialist_agent(
     timeout_seconds: int = 60,
 ) -> str:
     payload = build_a2a_payload(state, trace_id)
+    breaker = _allow_service_call(
+        target_agent=target_agent,
+        trace_id=trace_id,
+    )
 
     log_event(
         "a2a.request",
@@ -225,65 +348,136 @@ def call_specialist_agent(
         url=target_url,
     )
 
-    with observe_duration(
-        f"a2a.{target_agent}.request",
-        trace_id=trace_id,
-        agent="supervisor",
-        target_agent=target_agent,
-        url=target_url,
-    ):
-        last_exception = None
-        response = None
+    try:
+        with observe_duration(
+            f"a2a.{target_agent}.request",
+            trace_id=trace_id,
+            agent="supervisor",
+            target_agent=target_agent,
+            url=target_url,
+        ):
+            response = None
+            last_exception: requests.exceptions.RequestException | None = None
 
-        for attempt in range(1, 3):
-            try:
-                log_event(
-                    f"a2a.{target_agent}.attempt",
+            for attempt in range(1, A2A_MAX_ATTEMPTS + 1):
+                try:
+                    log_event(
+                        f"a2a.{target_agent}.attempt",
+                        trace_id=trace_id,
+                        target=target_agent,
+                        attempt=attempt,
+                        max_attempts=A2A_MAX_ATTEMPTS,
+                    )
+
+                    headers = {}
+                    if security.api_token:
+                        headers["Authorization"] = f"Bearer {security.api_token}"
+
+                    response = requests.post(
+                        target_url,
+                        json=payload,
+                        headers=headers,
+                        timeout=timeout_seconds,
+                    )
+                    response.raise_for_status()
+                    last_exception = None
+                    break
+
+                except requests.exceptions.RequestException as exc:
+                    last_exception = exc
+                    transient = _is_transient_request_exception(exc)
+
+                    log_event(
+                        f"a2a.{target_agent}.attempt_failed",
+                        trace_id=trace_id,
+                        target=target_agent,
+                        attempt=attempt,
+                        max_attempts=A2A_MAX_ATTEMPTS,
+                        transient=transient,
+                        error_type=type(exc).__name__,
+                        error_message=str(exc),
+                    )
+
+                    should_retry = transient and attempt < A2A_MAX_ATTEMPTS
+                    if not should_retry:
+                        break
+
+                    delay_seconds = _retry_delay_seconds(attempt)
+                    log_event(
+                        f"a2a.{target_agent}.retry_scheduled",
+                        trace_id=trace_id,
+                        target=target_agent,
+                        attempt=attempt,
+                        next_attempt=attempt + 1,
+                        delay_seconds=delay_seconds,
+                    )
+                    if delay_seconds > 0:
+                        time.sleep(delay_seconds)
+
+            if last_exception is not None:
+                if _is_transient_request_exception(last_exception):
+                    _record_service_failure(
+                        breaker=breaker,
+                        target_agent=target_agent,
+                        trace_id=trace_id,
+                        exc=last_exception,
+                    )
+                else:
+                    # A client/business error does not mean the service is unhealthy.
+                    _record_service_success(
+                        breaker=breaker,
+                        target_agent=target_agent,
+                        trace_id=trace_id,
+                    )
+                raise last_exception
+
+            if response is None:
+                exc = RuntimeError(
+                    f"{target_agent} Agent did not return a response."
+                )
+                _record_service_failure(
+                    breaker=breaker,
+                    target_agent=target_agent,
                     trace_id=trace_id,
-                    target=target_agent,
-                    attempt=attempt,
+                    exc=exc,
                 )
+                raise exc
 
-                headers = {}
-                if security.api_token:
-                    headers["Authorization"] = f"Bearer {security.api_token}"
+        try:
+            data = response.json()
+        except ValueError as exc:
+            _record_service_failure(
+                breaker=breaker,
+                target_agent=target_agent,
+                trace_id=trace_id,
+                exc=exc,
+            )
+            raise
 
-                response = requests.post(
-                    target_url,
-                    json=payload,
-                    headers=headers,
-                    timeout=timeout_seconds,
-                )
-                response.raise_for_status()
-                last_exception = None
-                break
+        specialist_response = data.get("response")
 
-            except requests.exceptions.RequestException as exc:
-                last_exception = exc
+        if not specialist_response:
+            exc = ValueError(
+                f"{target_agent} Agent response did not include a 'response' field."
+            )
+            _record_service_failure(
+                breaker=breaker,
+                target_agent=target_agent,
+                trace_id=trace_id,
+                exc=exc,
+            )
+            raise exc
 
-                log_event(
-                    f"a2a.{target_agent}.retry",
-                    trace_id=trace_id,
-                    target=target_agent,
-                    attempt=attempt,
-                    error_type=type(exc).__name__,
-                    error_message=str(exc),
-                )
+        _record_service_success(
+            breaker=breaker,
+            target_agent=target_agent,
+            trace_id=trace_id,
+        )
 
-                if attempt < 2:
-                    time.sleep(1)
-
-        if last_exception is not None:
-            raise last_exception
-
-        if response is None:
-            raise RuntimeError(f"{target_agent} Agent did not return a response.")
-
-    data = response.json()
-    specialist_response = data.get("response")
-
-    if not specialist_response:
-        raise ValueError(f"{target_agent} Agent response did not include a 'response' field.")
+    except CircuitBreakerOpenError:
+        raise
+    except Exception:
+        raise
 
     log_event(
         "a2a.response",
@@ -335,6 +529,25 @@ def inventory_node(state: AgentState):
             "trace_id": trace_id,
             "selected_route": "inventory",
         }
+
+    except CircuitBreakerOpenError as exc:
+        log_event(
+            "a2a.inventory.circuit_open",
+            trace_id=trace_id,
+            target="inventory",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            retry_after_seconds=exc.retry_after_seconds,
+            fallback="inventory_circuit_open_message",
+        )
+
+        fallback_message = (
+            "O Inventory Agent está temporariamente isolado pelo circuit breaker "
+            f"após falhas recentes. Tente novamente em aproximadamente "
+            f"{max(1, round(exc.retry_after_seconds))} segundos. "
+            f"Trace ID: {trace_id}."
+        )
+        return {"messages": [AIMessage(content=fallback_message)], "trace_id": trace_id}
 
     except requests.exceptions.Timeout as exc:
         log_event(
@@ -426,6 +639,25 @@ def supplier_node(state: AgentState):
             "selected_route": "supplier",
         }
 
+    except CircuitBreakerOpenError as exc:
+        log_event(
+            "a2a.supplier.circuit_open",
+            trace_id=trace_id,
+            target="supplier",
+            error_type=type(exc).__name__,
+            error_message=str(exc),
+            retry_after_seconds=exc.retry_after_seconds,
+            fallback="supplier_circuit_open_message",
+        )
+
+        fallback_message = (
+            "O Supplier Agent está temporariamente isolado pelo circuit breaker "
+            f"após falhas recentes. Tente novamente em aproximadamente "
+            f"{max(1, round(exc.retry_after_seconds))} segundos. "
+            f"Trace ID: {trace_id}."
+        )
+        return {"messages": [AIMessage(content=fallback_message)], "trace_id": trace_id}
+
     except requests.exceptions.Timeout as exc:
         log_event(
             "a2a.supplier.error",
@@ -501,37 +733,137 @@ def _structured_get(
     path: str,
     trace_id: str,
     tool_operation: str,
+    target_agent: str,
     timeout_seconds: int = 30,
 ) -> dict:
-    """Call a deterministic REST endpoint and return JSON data."""
+    """Call a deterministic REST endpoint with retry and circuit breaking."""
+
     url = f"{base_url.rstrip('/')}/{path.lstrip('/')}"
+    breaker = _allow_service_call(
+        target_agent=target_agent,
+        trace_id=trace_id,
+    )
 
     log_event(
         "supervisor.structured_tool.request",
         trace_id=trace_id,
+        target_agent=target_agent,
         url=url,
         tool_operation=tool_operation,
     )
 
     start = time.perf_counter()
-    headers = {}
-    if security.api_token:
-        headers["Authorization"] = f"Bearer {security.api_token}"
+    response = None
+    last_exception: requests.exceptions.RequestException | None = None
 
-    response = requests.get(url, headers=headers, timeout=timeout_seconds)
+    for attempt in range(1, A2A_MAX_ATTEMPTS + 1):
+        try:
+            headers = {}
+            if security.api_token:
+                headers["Authorization"] = f"Bearer {security.api_token}"
+
+            response = requests.get(
+                url,
+                headers=headers,
+                timeout=timeout_seconds,
+            )
+            response.raise_for_status()
+            last_exception = None
+            break
+
+        except requests.exceptions.RequestException as exc:
+            last_exception = exc
+            transient = _is_transient_request_exception(exc)
+
+            log_event(
+                "supervisor.structured_tool.attempt_failed",
+                trace_id=trace_id,
+                target_agent=target_agent,
+                url=url,
+                tool_operation=tool_operation,
+                attempt=attempt,
+                max_attempts=A2A_MAX_ATTEMPTS,
+                transient=transient,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+            )
+
+            should_retry = transient and attempt < A2A_MAX_ATTEMPTS
+            if not should_retry:
+                break
+
+            delay_seconds = _retry_delay_seconds(attempt)
+            log_event(
+                "supervisor.structured_tool.retry_scheduled",
+                trace_id=trace_id,
+                target_agent=target_agent,
+                url=url,
+                tool_operation=tool_operation,
+                attempt=attempt,
+                next_attempt=attempt + 1,
+                delay_seconds=delay_seconds,
+            )
+            if delay_seconds > 0:
+                time.sleep(delay_seconds)
+
     latency_ms = round((time.perf_counter() - start) * 1000, 2)
+
+    if last_exception is not None:
+        if _is_transient_request_exception(last_exception):
+            _record_service_failure(
+                breaker=breaker,
+                target_agent=target_agent,
+                trace_id=trace_id,
+                exc=last_exception,
+            )
+        else:
+            _record_service_success(
+                breaker=breaker,
+                target_agent=target_agent,
+                trace_id=trace_id,
+            )
+        raise last_exception
+
+    if response is None:
+        exc = RuntimeError(
+            f"{target_agent} structured endpoint did not return a response."
+        )
+        _record_service_failure(
+            breaker=breaker,
+            target_agent=target_agent,
+            trace_id=trace_id,
+            exc=exc,
+        )
+        raise exc
+
+    try:
+        data = response.json()
+    except ValueError as exc:
+        _record_service_failure(
+            breaker=breaker,
+            target_agent=target_agent,
+            trace_id=trace_id,
+            exc=exc,
+        )
+        raise
+
+    _record_service_success(
+        breaker=breaker,
+        target_agent=target_agent,
+        trace_id=trace_id,
+    )
 
     log_event(
         "supervisor.structured_tool.response",
         trace_id=trace_id,
+        target_agent=target_agent,
         url=url,
         tool_operation=tool_operation,
         http_status_code=response.status_code,
         latency_ms=latency_ms,
     )
 
-    response.raise_for_status()
-    return response.json()
+    return data
 
 
 def _format_inventory_policy(policy: dict) -> str:
@@ -589,6 +921,7 @@ def _resolve_supplier_name(question: str, conversation_context: str = "", trace_
                 path=f"/products/{quote(product_code)}",
                 trace_id=trace_id or new_trace_id(),
                 tool_operation="resolveSupplierFromProduct",
+                target_agent="inventory",
             )
             product = product_payload.get("product", {}) if isinstance(product_payload, dict) else {}
             supplier_name = product.get("preferred_supplier")
@@ -619,6 +952,7 @@ def _answer_inventory_structured(*, question: str, product_code: str, trace_id: 
             path=f"/products/{quote(product_code)}",
             trace_id=trace_id,
             tool_operation="getProduct",
+            target_agent="inventory",
         )
     except Exception as exc:
         log_event(
@@ -674,6 +1008,7 @@ def _answer_supplier_structured(*, question: str, supplier_name: str, trace_id: 
             path=f"/suppliers/{quote(supplier_name)}",
             trace_id=trace_id,
             tool_operation="getSupplier",
+            target_agent="supplier",
         )
     except Exception as exc:
         log_event(
@@ -794,6 +1129,7 @@ def multi_agent_node(state: AgentState):
             path=f"/products/{quote(product_code)}",
             trace_id=trace_id,
             tool_operation="getProduct",
+            target_agent="inventory",
         )
         policy_future = executor.submit(
             _structured_get,
@@ -801,6 +1137,7 @@ def multi_agent_node(state: AgentState):
             path=f"/inventory-policy/{quote(product_code)}",
             trace_id=trace_id,
             tool_operation="getInventoryPolicy",
+            target_agent="inventory",
         )
 
         log_event(
@@ -839,6 +1176,7 @@ def multi_agent_node(state: AgentState):
                 path=f"/suppliers/{quote(supplier_name)}",
                 trace_id=trace_id,
                 tool_operation="getSupplier",
+                target_agent="supplier",
             )
             log_event(
                 "supervisor.multi_agent.parallel.supplier_submitted",
@@ -1367,6 +1705,14 @@ def health():
         "status": "ok",
         "agent": "supervisor",
         "routes": ["inventory", "supplier", "both", "knowledge"],
+        "resilience": {
+            "max_attempts": A2A_MAX_ATTEMPTS,
+            "retry_backoff_seconds": A2A_RETRY_BACKOFF_SECONDS,
+            "circuit_breakers": {
+                name: breaker.snapshot().__dict__
+                for name, breaker in CIRCUIT_BREAKERS.items()
+            },
+        },
     }
 
 

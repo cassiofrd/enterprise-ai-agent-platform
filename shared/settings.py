@@ -40,8 +40,44 @@ class AppSettings:
     supplier_agent_url: str | None
     supervisor_url: str | None
 
+    # Resilience
+    a2a_max_attempts: int
+    a2a_retry_backoff_seconds: float
+    circuit_breaker_failure_threshold: int
+    circuit_breaker_recovery_timeout_seconds: float
+
     # Observability
     streamlit_observability_log: str | None
+
+
+def _get_int(name: str, default: int, minimum: int = 1) -> int:
+    raw_value = security.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+
+    try:
+        value = int(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be an integer.") from exc
+
+    if value < minimum:
+        raise ValueError(f"{name} must be greater than or equal to {minimum}.")
+    return value
+
+
+def _get_float(name: str, default: float, minimum: float = 0.0) -> float:
+    raw_value = security.get(name)
+    if raw_value is None or not raw_value.strip():
+        return default
+
+    try:
+        value = float(raw_value)
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a number.") from exc
+
+    if value < minimum:
+        raise ValueError(f"{name} must be greater than or equal to {minimum}.")
+    return value
 
 
 def load_settings() -> AppSettings:
@@ -68,6 +104,22 @@ def load_settings() -> AppSettings:
         inventory_agent_url=security.get("INVENTORY_AGENT_URL"),
         supplier_agent_url=security.get("SUPPLIER_AGENT_URL"),
         supervisor_url=security.get("SUPERVISOR_URL"),
+
+        a2a_max_attempts=_get_int("A2A_MAX_ATTEMPTS", default=2),
+        a2a_retry_backoff_seconds=_get_float(
+            "A2A_RETRY_BACKOFF_SECONDS",
+            default=1.0,
+            minimum=0.0,
+        ),
+        circuit_breaker_failure_threshold=_get_int(
+            "CIRCUIT_BREAKER_FAILURE_THRESHOLD",
+            default=3,
+        ),
+        circuit_breaker_recovery_timeout_seconds=_get_float(
+            "CIRCUIT_BREAKER_RECOVERY_TIMEOUT_SECONDS",
+            default=30.0,
+            minimum=0.1,
+        ),
 
         streamlit_observability_log=security.get("STREAMLIT_OBSERVABILITY_LOG"),
     )
