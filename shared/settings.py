@@ -64,6 +64,7 @@ class AppSettings:
     otel_service_name: str
     otel_enabled: bool
     applicationinsights_connection_string: str | None
+    otel_console_exporter_enabled: bool
     llm_pricing_usd_per_1m_json: str | None
 
 
@@ -205,6 +206,10 @@ def load_settings() -> AppSettings:
         otel_enabled=_get_bool("OTEL_ENABLED", default=False),
         applicationinsights_connection_string=security.get(
             "APPLICATIONINSIGHTS_CONNECTION_STRING"
+        ),
+        otel_console_exporter_enabled=_get_bool(
+            "OTEL_CONSOLE_EXPORTER_ENABLED",
+            default=False,
         ),
         llm_pricing_usd_per_1m_json=security.get(
             "LLM_PRICING_USD_PER_1M_JSON"

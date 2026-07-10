@@ -14,6 +14,13 @@ from shared.config import EVENT_LOG_PATH, LOG_DIR
 from shared.metrics import metrics_collector
 from shared.request_context import get_request_context
 from shared.settings import settings
+from shared.telemetry import (
+    add_telemetry_event,
+    initialize_telemetry,
+    record_telemetry_exception,
+    telemetry_span,
+    telemetry_status,
+)
 
 
 _F = TypeVar("_F", bound=Callable[..., Any])
@@ -54,6 +61,9 @@ def _load_model_pricing() -> dict[str, dict[str, float]]:
 MODEL_PRICING_USD_PER_1M_TOKENS = _load_model_pricing()
 
 _IN_MEMORY_EVENTS: list[dict[str, Any]] = []
+
+# Safe no-op locally when OTEL_ENABLED=false.
+initialize_telemetry()
 
 
 def new_trace_id() -> str:
@@ -119,6 +129,15 @@ def log_event(event_type: str, **fields: Any) -> None:
     if event_type in {"cache.miss", "rag.cache.miss"}:
         metrics_collector.increment("cache.misses", labels=labels)
 
+    add_telemetry_event(
+        event_type,
+        **{
+            key: value
+            for key, value in payload.items()
+            if key not in {"ts", "timestamp", "event_type"}
+        },
+    )
+
     print(f"[OBS] {event_type} | {fields}")
 
 
@@ -126,21 +145,31 @@ def log_event(event_type: str, **fields: Any) -> None:
 def observe_duration(event_type: str, **fields: Any) -> Iterator[None]:
     start = time.perf_counter()
 
-    try:
-        yield
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        log_event(event_type, status="success", latency_ms=latency_ms, **fields)
-    except Exception as exc:
-        latency_ms = round((time.perf_counter() - start) * 1000, 2)
-        log_event(
-            event_type,
-            status="error",
-            latency_ms=latency_ms,
-            error_type=type(exc).__name__,
-            error_message=str(exc),
-            **fields,
-        )
-        raise
+    with telemetry_span(
+        event_type,
+        attributes=fields,
+    ):
+        try:
+            yield
+            latency_ms = round((time.perf_counter() - start) * 1000, 2)
+            log_event(
+                event_type,
+                status="success",
+                latency_ms=latency_ms,
+                **fields,
+            )
+        except Exception as exc:
+            latency_ms = round((time.perf_counter() - start) * 1000, 2)
+            record_telemetry_exception(exc)
+            log_event(
+                event_type,
+                status="error",
+                latency_ms=latency_ms,
+                error_type=type(exc).__name__,
+                error_message=str(exc),
+                **fields,
+            )
+            raise
 
 
 def measure_time(event_type: str, **static_fields: Any):
@@ -515,3 +544,8 @@ def get_trace_index(limit: int = 50) -> list[dict[str, Any]]:
 
     rows = sorted(rows, key=lambda item: str(item.get("last_timestamp") or ""), reverse=True)
     return rows[:limit]
+
+
+
+def get_telemetry_status() -> dict[str, Any]:
+    return telemetry_status()
