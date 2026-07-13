@@ -34,8 +34,13 @@ jobs:
           az extension add \
             --name containerapp \
             --upgrade \
-            --allow-preview false \
+            --allow-preview true \
             --only-show-errors
+
+          az extension show \
+            --name containerapp \
+            --query "{Name:name,Version:version}" \
+            --output table
 
       - name: Build and push Inventory image
         run: |
