@@ -47,54 +47,106 @@ foreach ($app in $apps) {
         throw "Container '$($app.Container)' was not found in $($app.Name)."
     }
 
-    $container | Add-Member `
-        -NotePropertyName probes `
-        -NotePropertyValue @(
-            @{
-                type = "Startup"
-                httpGet = @{
-                    path = "/live"
-                    port = $app.Port
-                    scheme = "HTTP"
-                }
-                initialDelaySeconds = 2
-                periodSeconds = 5
-                timeoutSeconds = 3
-                failureThreshold = 10
-                successThreshold = 1
-            },
-            @{
-                type = "Liveness"
-                httpGet = @{
-                    path = "/live"
-                    port = $app.Port
-                    scheme = "HTTP"
-                }
-                initialDelaySeconds = 10
-                periodSeconds = 30
-                timeoutSeconds = 5
-                failureThreshold = 3
-                successThreshold = 1
-            },
-            @{
-                type = "Readiness"
-                httpGet = @{
-                    path = "/ready"
-                    port = $app.Port
-                    scheme = "HTTP"
-                }
-                initialDelaySeconds = 5
-                periodSeconds = 10
-                timeoutSeconds = 5
-                failureThreshold = 3
-                successThreshold = 1
+    $probes = @(
+        @{
+            type = "Startup"
+            httpGet = @{
+                path = "/live"
+                port = $app.Port
+                scheme = "HTTP"
             }
-        ) `
-        -Force
+            initialDelaySeconds = 2
+            periodSeconds = 5
+            timeoutSeconds = 3
+            failureThreshold = 10
+            successThreshold = 1
+        },
+        @{
+            type = "Liveness"
+            httpGet = @{
+                path = "/live"
+                port = $app.Port
+                scheme = "HTTP"
+            }
+            initialDelaySeconds = 10
+            periodSeconds = 30
+            timeoutSeconds = 5
+            failureThreshold = 3
+            successThreshold = 1
+        },
+        @{
+            type = "Readiness"
+            httpGet = @{
+                path = "/ready"
+                port = $app.Port
+                scheme = "HTTP"
+            }
+            initialDelaySeconds = 5
+            periodSeconds = 10
+            timeoutSeconds = 5
+            failureThreshold = 3
+            successThreshold = 1
+        }
+    )
+
+    # Do not send the full object returned by `az containerapp show`.
+    # Newer CLI extensions may include read-only fields such as `imageType`,
+    # which the stable ARM API rejects during PATCH. Build a clean writable
+    # container payload instead.
+    $cleanEnv = @(
+        foreach ($envVar in @($container.env)) {
+            $item = @{
+                name = $envVar.name
+            }
+
+            if ($envVar.secretRef) {
+                $item.secretRef = $envVar.secretRef
+            }
+            elseif ($null -ne $envVar.value) {
+                $item.value = [string]$envVar.value
+            }
+
+            $item
+        }
+    )
+
+    $cleanContainer = @{
+        name = $container.name
+        image = $container.image
+        resources = @{
+            cpu = $container.resources.cpu
+            memory = $container.resources.memory
+        }
+        env = $cleanEnv
+        probes = $probes
+    }
+
+    if ($container.command) {
+        $cleanContainer.command = @($container.command)
+    }
+
+    if ($container.args) {
+        $cleanContainer.args = @($container.args)
+    }
+
+    if ($container.volumeMounts) {
+        $cleanContainer.volumeMounts = @($container.volumeMounts)
+    }
+
+    $cleanTemplate = @{
+        containers = @($cleanContainer)
+    }
+
+    if ($resource.properties.template.scale) {
+        $cleanTemplate.scale = @{
+            minReplicas = $resource.properties.template.scale.minReplicas
+            maxReplicas = $resource.properties.template.scale.maxReplicas
+        }
+    }
 
     $body = @{
         properties = @{
-            template = $resource.properties.template
+            template = $cleanTemplate
         }
     } | ConvertTo-Json -Depth 100 -Compress
 
