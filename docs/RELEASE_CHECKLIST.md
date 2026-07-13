@@ -71,3 +71,17 @@ First stable release of the enterprise multi-agent supply-chain copilot platform
 - Configure Azure Application Insights.
 - Configure Container Apps liveness/readiness probes (/live,/ready).
 - Keep only supervisor externally exposed.
+
+## Azure production closure — v2.3.3
+
+- [ ] Custom Startup, Liveness and Readiness probes are visible on all three Container Apps.
+- [ ] Application Insights is linked to the existing Log Analytics workspace.
+- [ ] `OTEL_ENABLED=true` is configured on all three Container Apps.
+- [ ] Telemetry appears in Application Insights after production requests.
+- [ ] A shared `API_TOKEN` secret is configured on Supervisor, Inventory and Supplier.
+- [ ] Supervisor has both `INVENTORY_AGENT_URL` and `SUPPLIER_AGENT_URL`.
+- [ ] Inventory and Supplier ingress are internal.
+- [ ] Supervisor ingress remains external.
+- [ ] Production `/copilot` request succeeds through the Supervisor.
+- [ ] Release tag `v2.3.3` has been created after final verification.
+

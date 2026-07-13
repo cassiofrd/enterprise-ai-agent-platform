@@ -13,6 +13,8 @@ env:
   INVENTORY_APP: inventory-agent
   SUPERVISOR_APP: supervisor-agent
   SUPPLIER_APP: supplier-agent
+  APP_VERSION: 2.3.3
+  APP_ENVIRONMENT: production
 
 jobs:
   build-and-deploy:
@@ -27,10 +29,18 @@ jobs:
         with:
           creds: ${{ secrets.AZURE_CREDENTIALS }}
 
+      - name: Upgrade Container Apps extension
+        run: |
+          az extension add \
+            --name containerapp \
+            --upgrade \
+            --allow-preview false \
+            --only-show-errors
+
       - name: Build and push Inventory image
         run: |
           az acr build \
-            --registry $ACR_NAME \
+            --registry "$ACR_NAME" \
             --image inventory-agent:latest \
             --file Dockerfile.inventory \
             .
@@ -38,7 +48,7 @@ jobs:
       - name: Build and push Supplier image
         run: |
           az acr build \
-            --registry $ACR_NAME \
+            --registry "$ACR_NAME" \
             --image supplier-agent:latest \
             --file Dockerfile.supplier \
             .
@@ -46,39 +56,118 @@ jobs:
       - name: Build and push Supervisor image
         run: |
           az acr build \
-            --registry $ACR_NAME \
+            --registry "$ACR_NAME" \
             --image supervisor-agent:latest \
             --file Dockerfile.supervisor \
             .
 
+      - name: Resolve release metadata
+        id: release
+        shell: bash
+        run: |
+          echo "build_sha=${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          echo "force_restart=$(date +%Y%m%d%H%M%S)" >> "$GITHUB_OUTPUT"
+
       - name: Deploy Inventory Agent
         run: |
           az containerapp update \
-            --name $INVENTORY_APP \
-            --resource-group $RESOURCE_GROUP \
-            --image $ACR_LOGIN_SERVER/inventory-agent:latest \
+            --name "$INVENTORY_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_LOGIN_SERVER/inventory-agent:latest" \
             --min-replicas 1 \
             --max-replicas 1 \
-            --set-env-vars FORCE_RESTART=$(date +%Y%m%d%H%M%S)
+            --set-env-vars \
+              FORCE_RESTART=${{ steps.release.outputs.force_restart }} \
+              APP_VERSION="$APP_VERSION" \
+              APP_ENVIRONMENT="$APP_ENVIRONMENT" \
+              BUILD_SHA=${{ steps.release.outputs.build_sha }}
 
       - name: Deploy Supplier Agent
         run: |
           az containerapp update \
-            --name $SUPPLIER_APP \
-            --resource-group $RESOURCE_GROUP \
-            --image $ACR_LOGIN_SERVER/supplier-agent:latest \
+            --name "$SUPPLIER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_LOGIN_SERVER/supplier-agent:latest" \
             --min-replicas 1 \
             --max-replicas 1 \
-            --set-env-vars FORCE_RESTART=$(date +%Y%m%d%H%M%S)
+            --set-env-vars \
+              FORCE_RESTART=${{ steps.release.outputs.force_restart }} \
+              APP_VERSION="$APP_VERSION" \
+              APP_ENVIRONMENT="$APP_ENVIRONMENT" \
+              BUILD_SHA=${{ steps.release.outputs.build_sha }}
+
+      - name: Resolve specialist service URLs
+        id: specialists
+        shell: bash
+        run: |
+          inventory_fqdn=$(az containerapp show \
+            --name "$INVENTORY_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+
+          supplier_fqdn=$(az containerapp show \
+            --name "$SUPPLIER_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+
+          test -n "$inventory_fqdn"
+          test -n "$supplier_fqdn"
+
+          echo "inventory_url=https://${inventory_fqdn}/invoke" >> "$GITHUB_OUTPUT"
+          echo "supplier_url=https://${supplier_fqdn}/invoke" >> "$GITHUB_OUTPUT"
 
       - name: Deploy Supervisor Agent
         run: |
           az containerapp update \
-            --name $SUPERVISOR_APP \
-            --resource-group $RESOURCE_GROUP \
-            --image $ACR_LOGIN_SERVER/supervisor-agent:latest \
+            --name "$SUPERVISOR_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --image "$ACR_LOGIN_SERVER/supervisor-agent:latest" \
             --min-replicas 1 \
             --max-replicas 1 \
-            --set-env-vars FORCE_RESTART=$(date +%Y%m%d%H%M%S)
+            --set-env-vars \
+              FORCE_RESTART=${{ steps.release.outputs.force_restart }} \
+              APP_VERSION="$APP_VERSION" \
+              APP_ENVIRONMENT="$APP_ENVIRONMENT" \
+              BUILD_SHA=${{ steps.release.outputs.build_sha }} \
+              INVENTORY_AGENT_URL=${{ steps.specialists.outputs.inventory_url }} \
+              SUPPLIER_AGENT_URL=${{ steps.specialists.outputs.supplier_url }}
 
-# TODO: configure liveness/readiness probes via az containerapp update in deployment step.
+      - name: Configure HTTP health probes
+        shell: pwsh
+        run: |
+          ./scripts/configure_container_apps_probes.ps1 `
+            -ResourceGroup $env:RESOURCE_GROUP
+
+      - name: Validate deployed revisions
+        shell: bash
+        run: |
+          for app in "$INVENTORY_APP" "$SUPPLIER_APP" "$SUPERVISOR_APP"; do
+            status=$(az containerapp show \
+              --name "$app" \
+              --resource-group "$RESOURCE_GROUP" \
+              --query properties.runningStatus \
+              --output tsv)
+
+            if [ "$status" != "Running" ]; then
+              echo "$app is not running. Current status: $status"
+              exit 1
+            fi
+          done
+
+          supervisor_fqdn=$(az containerapp show \
+            --name "$SUPERVISOR_APP" \
+            --resource-group "$RESOURCE_GROUP" \
+            --query properties.configuration.ingress.fqdn \
+            --output tsv)
+
+          curl --fail --silent --show-error \
+            --retry 12 \
+            --retry-delay 5 \
+            "https://${supervisor_fqdn}/live"
+
+          curl --fail --silent --show-error \
+            --retry 12 \
+            --retry-delay 5 \
+            "https://${supervisor_fqdn}/ready"
