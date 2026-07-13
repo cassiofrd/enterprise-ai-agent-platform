@@ -351,3 +351,57 @@ The Azure Container Apps health probes should use `/live` for liveness and
 Redis cache fallback and OpenTelemetry do not mark the process unavailable
 unless they are configured as required dependencies.
 
+
+
+---
+
+# Project Status
+
+**Status:** ✅ Production-ready reference implementation (v2.3.3)
+
+## Key capabilities
+
+- Multi-agent architecture (Supervisor, Inventory and Supplier agents)
+- LangGraph orchestration
+- FastAPI services
+- Azure Container Apps deployment
+- Azure Container Registry integration
+- Azure AI Search (RAG)
+- MCP integration
+- A2A communication between agents
+- Redis-backed conversation cache with in-memory fallback
+- Cost tracking and observability
+- OpenTelemetry instrumentation
+- Health endpoints (`/live` and `/ready`)
+- Startup, Liveness and Readiness probes
+- GitHub Actions CI/CD
+- Automated test suite (63 tests)
+
+## High-level architecture
+
+```text
+Client
+   |
+   v
+Supervisor Agent
+   |
+   +--> Inventory Agent --> Azure AI Search / MCP
+   |
+   +--> Supplier Agent  --> MCP
+
+GitHub Actions
+      |
+Azure Container Registry
+      |
+Azure Container Apps
+```
+
+## Validation
+
+The production deployment was validated with:
+
+- 63 automated tests passing
+- Successful GitHub Actions deployment
+- Azure Container Apps health probes
+- End-to-end authenticated `/copilot` request
+- Production deployment metadata (`APP_VERSION`, `BUILD_SHA`, `APP_ENVIRONMENT`)
