@@ -80,3 +80,5 @@ jobs:
             --min-replicas 1 \
             --max-replicas 1 \
             --set-env-vars FORCE_RESTART=$(date +%Y%m%d%H%M%S)
+
+# TODO: configure liveness/readiness probes via az containerapp update in deployment step.

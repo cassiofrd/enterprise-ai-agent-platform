@@ -65,3 +65,9 @@ Suggested release description:
 ```text
 First stable release of the enterprise multi-agent supply-chain copilot platform with Azure AI Foundry integration, Azure Container Apps deployment, Azure AI Search RAG, contextual memory, source citations, trace observability and CI/CD.
 ```
+
+
+## Final production checklist
+- Configure Azure Application Insights.
+- Configure Container Apps liveness/readiness probes (/live,/ready).
+- Keep only supervisor externally exposed.
